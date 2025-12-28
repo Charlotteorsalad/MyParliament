@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom animations for book-flip toggle effect */
+@keyframes slideInLeft {
+  0% {
+    transform: translateX(-100%) rotateY(-15deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0) rotateY(0deg);
+    opacity: 1;
+  }
+}
+
+@keyframes slideInRight {
+  0% {
+    transform: translateX(100%) rotateY(15deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0) rotateY(0deg);
+    opacity: 1;
+  }
+}
+
+.animate-slideInLeft {
+  animation: slideInLeft 0.7s ease-in-out;
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.7s ease-in-out;
+}
+
+/* Smooth transitions for the toggle effect */
+.transform {
+  transition: all 0.7s ease-in-out;
+}
+
+/* 3D perspective for the flip effect */
+.min-h-screen {
+  perspective: 1000px;
+}
+
+/* Disable Grammarly on all form elements to prevent errors */
+input[data-grammarly-disable],
+textarea[data-grammarly-disable],
+input[data-gramm],
+textarea[data-gramm] {
+  data-grammarly-disable: true;
+}
+
+/* Global Grammarly disable for all form elements */
+input, textarea, [contenteditable] {
+  data-grammarly-disable: true;
+  data-gramm: false;
+}
+
+/* Additional Grammarly disable rules for React components */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="url"],
+input[type="search"],
+textarea {
+  data-grammarly-disable: true !important;
+  data-gramm: false !important;
+  data-grammarly-disable-grammarly: true !important;
+}
