@@ -1,0 +1,10 @@
+{
+  "pipeline": "03_mehtc_entity_only",
+  "sample_size": 20000,
+  "silhouette": 0.35762760043144226,
+  "coherence_cv": 0.30545693767799853,
+  "coherence_npmi": -0.29452660923109997,
+  "topic_diversity": 0.4,
+  "valid_clusters": 20,
+  "total_clusters": 20
+}
