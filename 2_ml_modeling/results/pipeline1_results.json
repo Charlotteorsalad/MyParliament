@@ -1,0 +1,9 @@
+{
+  "pipeline": "01_tfidf_kmeans",
+  "silhouette": 0.03821936874215023,
+  "coherence_cv": 0.7945769848032784,
+  "coherence_npmi": NaN,
+  "topic_diversity": 0.85,
+  "valid_clusters": 18,
+  "total_clusters": 20
+}

@@ -1,0 +1,10 @@
+{
+  "pipeline": "02_tfidf_lda",
+  "best_num_topics": 15,
+  "silhouette": 0.8402311188181709,
+  "coherence_cv": 0.43218348703101256,
+  "coherence_npmi": -0.023596208408089306,
+  "topic_diversity": 0.16,
+  "perplexity": -8.197432559029542,
+  "valid_topics": 15
+}
