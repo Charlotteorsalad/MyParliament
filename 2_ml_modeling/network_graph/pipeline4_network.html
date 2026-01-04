@@ -1,0 +1,265 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script src="lib/bindings/utils.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 800px;
+                 background-color: #ffffff;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+             #loadingBar {
+                 position:absolute;
+                 top:0px;
+                 left:0px;
+                 width: 100%;
+                 height: 800px;
+                 background-color:rgba(200,200,200,0.8);
+                 -webkit-transition: all 0.5s ease;
+                 -moz-transition: all 0.5s ease;
+                 -ms-transition: all 0.5s ease;
+                 -o-transition: all 0.5s ease;
+                 transition: all 0.5s ease;
+                 opacity:1;
+             }
+
+             #bar {
+                 position:absolute;
+                 top:0px;
+                 left:0px;
+                 width:20px;
+                 height:20px;
+                 margin:auto auto auto auto;
+                 border-radius:11px;
+                 border:2px solid rgba(30,30,30,0.05);
+                 background: rgb(0, 173, 246); /* Old browsers */
+                 box-shadow: 2px 0px 4px rgba(0,0,0,0.4);
+             }
+
+             #border {
+                 position:absolute;
+                 top:10px;
+                 left:10px;
+                 width:500px;
+                 height:23px;
+                 margin:auto auto auto auto;
+                 box-shadow: 0px 0px 4px rgba(0,0,0,0.2);
+                 border-radius:10px;
+             }
+
+             #text {
+                 position:absolute;
+                 top:8px;
+                 left:530px;
+                 width:30px;
+                 height:50px;
+                 margin:auto auto auto auto;
+                 font-size:22px;
+                 color: #000000;
+             }
+
+             div.outerBorder {
+                 position:relative;
+                 top:400px;
+                 width:600px;
+                 height:44px;
+                 margin:auto auto auto auto;
+                 border:8px solid rgba(0,0,0,0.1);
+                 background: rgb(252,252,252); /* Old browsers */
+                 background: -moz-linear-gradient(top,  rgba(252,252,252,1) 0%, rgba(237,237,237,1) 100%); /* FF3.6+ */
+                 background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(252,252,252,1)), color-stop(100%,rgba(237,237,237,1))); /* Chrome,Safari4+ */
+                 background: -webkit-linear-gradient(top,  rgba(252,252,252,1) 0%,rgba(237,237,237,1) 100%); /* Chrome10+,Safari5.1+ */
+                 background: -o-linear-gradient(top,  rgba(252,252,252,1) 0%,rgba(237,237,237,1) 100%); /* Opera 11.10+ */
+                 background: -ms-linear-gradient(top,  rgba(252,252,252,1) 0%,rgba(237,237,237,1) 100%); /* IE10+ */
+                 background: linear-gradient(to bottom,  rgba(252,252,252,1) 0%,rgba(237,237,237,1) 100%); /* W3C */
+                 filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#fcfcfc', endColorstr='#ededed',GradientType=0 ); /* IE6-9 */
+                 border-radius:72px;
+                 box-shadow: 0px 0px 10px rgba(0,0,0,0.2);
+             }
+             
+
+             
+             #config {
+                 float: left;
+                 width: 400px;
+                 height: 600px;
+             }
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+            <div id="loadingBar">
+              <div class="outerBorder">
+                <div id="text">0%</div>
+                <div id="border">
+                  <div id="bar"></div>
+                </div>
+              </div>
+            </div>
+        
+        
+            <div id="config"></div>
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_0", "label": "Topic_0", "shape": "dot", "size": 60, "title": "Topic 0 (12600 segments)"}, {"color": "#33a02c", "font": {"color": "black"}, "id": "yang", "label": "yang", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "dan", "label": "dan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "saya", "label": "saya", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ini", "label": "ini", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "tidak", "label": "tidak", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ada", "label": "ada", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "berhormat", "label": "berhormat", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "untuk", "label": "untuk", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "tuan", "label": "tuan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "itu", "label": "itu", "shape": "dot", "size": 15}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_3", "label": "Topic_3", "shape": "dot", "size": 60, "title": "Topic 3 (23 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_6", "label": "Topic_6", "shape": "dot", "size": 60, "title": "Topic 6 (25 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_8", "label": "Topic_8", "shape": "dot", "size": 60, "title": "Topic 8 (7127 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_9", "label": "Topic_9", "shape": "dot", "size": 60, "title": "Topic 9 (130 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_10", "label": "Topic_10", "shape": "dot", "size": 60, "title": "Topic 10 (8 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_12", "label": "Topic_12", "shape": "dot", "size": 60, "title": "Topic 12 (4 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_13", "label": "Topic_13", "shape": "dot", "size": 60, "title": "Topic 13 (2 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_14", "label": "Topic_14", "shape": "dot", "size": 60, "title": "Topic 14 (39 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_16", "label": "Topic_16", "shape": "dot", "size": 60, "title": "Topic 16 (2 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_17", "label": "Topic_17", "shape": "dot", "size": 60, "title": "Topic 17 (2 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_19", "label": "Topic_19", "shape": "dot", "size": 60, "title": "Topic 19 (2 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_1", "label": "Topic_1", "shape": "dot", "size": 60, "title": "Topic 1 (4 segments)"}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sekejap.", "label": "sekejap.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bagilah.", "label": "bagilah.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sekejap", "label": "sekejap", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "libaran", "label": "libaran", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "boleh?", "label": "boleh?", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "duduk,", "label": "duduk,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bercakap!", "label": "bercakap!", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "peraturan.", "label": "peraturan.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "duduk!", "label": "duduk!", "shape": "dot", "size": 15}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_2", "label": "Topic_2", "shape": "dot", "size": 60, "title": "Topic 2 (3 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_4", "label": "Topic_4", "shape": "dot", "size": 60, "title": "Topic 4 (13 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_5", "label": "Topic_5", "shape": "dot", "size": 60, "title": "Topic 5 (8 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_7", "label": "Topic_7", "shape": "dot", "size": 60, "title": "Topic 7 (2 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_11", "label": "Topic_11", "shape": "dot", "size": 60, "title": "Topic 11 (1 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_15", "label": "Topic_15", "shape": "dot", "size": 60, "title": "Topic 15 (3 segments)"}, {"color": "#1f78b4", "font": {"color": "black"}, "id": "Topic_18", "label": "Topic_18", "shape": "dot", "size": 60, "title": "Topic 18 (2 segments)"}, {"color": "#33a02c", "font": {"color": "black"}, "id": "amat", "label": "amat", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "berhormat..", "label": "berhormat..", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hanya", "label": "hanya", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "mengganggu", "label": "mengganggu", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "daripada", "label": "daripada", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "kasih.", "label": "kasih.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "terima", "label": "terima", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sikit.", "label": "sikit.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hingga", "label": "hingga", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "menteri.", "label": "menteri.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "dr.26.10.2021", "label": "dr.26.10.2021", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "boleh", "label": "boleh", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "tadi", "label": "tadi", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bagi.", "label": "bagi.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ce", "label": "ce", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "serupa", "label": "serupa", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "berhormat.", "label": "berhormat.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "dia", "label": "dia", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "mengikut", "label": "mengikut", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "boleh,", "label": "boleh,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "mesyuarat.", "label": "mesyuarat.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "tempat", "label": "tempat", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "penjelasan", "label": "penjelasan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ialah.", "label": "ialah.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "senarai", "label": "senarai", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sudah", "label": "sudah", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bangkitkan.", "label": "bangkitkan.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "last", "label": "last", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "malaysia", "label": "malaysia", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hakikatnya.", "label": "hakikatnya.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bolehlah.", "label": "bolehlah.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "boleh.", "label": "boleh.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "inilah", "label": "inilah", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hakikat", "label": "hakikat", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sebenarnya.", "label": "sebenarnya.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "dalam", "label": "dalam", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "deng", "label": "deng", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "the", "label": "the", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bagi", "label": "bagi", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "gulung", "label": "gulung", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "gulung,", "label": "gulung,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "berhormat,", "label": "berhormat,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "timbalan", "label": "timbalan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "menteri,", "label": "menteri,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "gulung.", "label": "gulung.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ya,", "label": "ya,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "satu", "label": "satu", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sila", "label": "sila", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sila.", "label": "sila.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sepert", "label": "sepert", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "demikian.", "label": "demikian.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "duduk.", "label": "duduk.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "...supaya", "label": "...supaya", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "dapat", "label": "dapat", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "semula.", "label": "semula.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "supaya", "label": "supaya", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "be", "label": "be", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bahag", "label": "bahag", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "ia", "label": "ia", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "select", "label": "select", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "cukup", "label": "cukup", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "cukup,", "label": "cukup,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "cukup.", "label": "cukup.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sudah.", "label": "sudah.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "lalu", "label": "lalu", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "duduk", "label": "duduk", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "kerana", "label": "kerana", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hangzhou.", "label": "hangzhou.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "mas", "label": "mas", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "kargo", "label": "kargo", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "meningkat.", "label": "meningkat.", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "warehouse", "label": "warehouse", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "hangzhou", "label": "hangzhou", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "pengerusi,", "label": "pengerusi,", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bukankah...", "label": "bukankah...", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bukankah", "label": "bukankah", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "bahawa...", "label": "bahawa...", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "adakah", "label": "adakah", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "enjelasan", "label": "enjelasan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "lagi?", "label": "lagi?", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "sihat?", "label": "sihat?", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "lee", "label": "lee", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "chong", "label": "chong", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "soalan", "label": "soalan", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "wei", "label": "wei", "shape": "dot", "size": 15}, {"color": "#33a02c", "font": {"color": "black"}, "id": "tentang", "label": "tentang", "shape": "dot", "size": 15}]);
+                  edges = new vis.DataSet([{"from": "Topic_0", "to": "yang", "width": 1}, {"from": "Topic_0", "to": "dan", "width": 1}, {"from": "Topic_0", "to": "saya", "width": 1}, {"from": "Topic_0", "to": "ini", "width": 1}, {"from": "Topic_0", "to": "tidak", "width": 1}, {"from": "Topic_0", "to": "ada", "width": 1}, {"from": "Topic_0", "to": "berhormat", "width": 1}, {"from": "Topic_0", "to": "untuk", "width": 1}, {"from": "Topic_0", "to": "tuan", "width": 1}, {"from": "Topic_0", "to": "itu", "width": 1}, {"from": "Topic_0", "to": "Topic_3", "value": 7.642340183258057, "width": 1}, {"from": "Topic_0", "to": "Topic_6", "value": 6.481847286224365, "width": 1}, {"from": "Topic_0", "to": "Topic_8", "value": 9.475666999816895, "width": 1}, {"from": "Topic_0", "to": "Topic_9", "value": 9.046207427978516, "width": 1}, {"from": "Topic_0", "to": "Topic_10", "value": 9.862319946289062, "width": 1}, {"from": "Topic_0", "to": "Topic_12", "value": 7.608315467834473, "width": 1}, {"from": "Topic_0", "to": "Topic_13", "value": 9.250606536865234, "width": 1}, {"from": "Topic_0", "to": "Topic_14", "value": 9.839969635009766, "width": 1}, {"from": "Topic_0", "to": "Topic_16", "value": 9.941235542297363, "width": 1}, {"from": "Topic_0", "to": "Topic_17", "value": 9.938315391540527, "width": 1}, {"from": "Topic_0", "to": "Topic_19", "value": 9.868499755859375, "width": 1}, {"from": "Topic_1", "to": "sekejap.", "width": 1}, {"from": "Topic_1", "to": "bagilah.", "width": 1}, {"from": "Topic_1", "to": "sekejap", "width": 1}, {"from": "Topic_1", "to": "libaran", "width": 1}, {"from": "Topic_1", "to": "boleh?", "width": 1}, {"from": "Topic_1", "to": "duduk,", "width": 1}, {"from": "Topic_1", "to": "bercakap!", "width": 1}, {"from": "Topic_1", "to": "tidak", "width": 1}, {"from": "Topic_1", "to": "peraturan.", "width": 1}, {"from": "Topic_1", "to": "duduk!", "width": 1}, {"from": "Topic_1", "to": "Topic_2", "value": 9.450006484985352, "width": 1}, {"from": "Topic_1", "to": "Topic_3", "value": 7.318001747131348, "width": 1}, {"from": "Topic_1", "to": "Topic_4", "value": 9.192543983459473, "width": 1}, {"from": "Topic_1", "to": "Topic_5", "value": 9.630125999450684, "width": 1}, {"from": "Topic_1", "to": "Topic_6", "value": 8.132265090942383, "width": 1}, {"from": "Topic_1", "to": "Topic_7", "value": 8.832569122314453, "width": 1}, {"from": "Topic_1", "to": "Topic_11", "value": 8.829297065734863, "width": 1}, {"from": "Topic_1", "to": "Topic_12", "value": 7.216067314147949, "width": 1}, {"from": "Topic_1", "to": "Topic_15", "value": 9.641145706176758, "width": 1}, {"from": "Topic_1", "to": "Topic_18", "value": 9.631165504455566, "width": 1}, {"from": "Topic_2", "to": "yang", "width": 1}, {"from": "Topic_2", "to": "amat", "width": 1}, {"from": "Topic_2", "to": "berhormat..", "width": 1}, {"from": "Topic_2", "to": "hanya", "width": 1}, {"from": "Topic_2", "to": "mengganggu", "width": 1}, {"from": "Topic_2", "to": "daripada", "width": 1}, {"from": "Topic_2", "to": "Topic_3", "value": 8.713265419006348, "width": 1}, {"from": "Topic_2", "to": "Topic_4", "value": 9.738595962524414, "width": 1}, {"from": "Topic_2", "to": "Topic_5", "value": 9.021086692810059, "width": 1}, {"from": "Topic_2", "to": "Topic_6", "value": 9.330201148986816, "width": 1}, {"from": "Topic_2", "to": "Topic_7", "value": 9.462368965148926, "width": 1}, {"from": "Topic_2", "to": "Topic_9", "value": 7.248143196105957, "width": 1}, {"from": "Topic_2", "to": "Topic_11", "value": 7.609112739562988, "width": 1}, {"from": "Topic_2", "to": "Topic_12", "value": 8.691633224487305, "width": 1}, {"from": "Topic_2", "to": "Topic_13", "value": 6.261858940124512, "width": 1}, {"from": "Topic_2", "to": "Topic_15", "value": 9.54583740234375, "width": 1}, {"from": "Topic_2", "to": "Topic_18", "value": 9.723592758178711, "width": 1}, {"from": "Topic_3", "to": "saya", "width": 1}, {"from": "Topic_3", "to": "kasih.", "width": 1}, {"from": "Topic_3", "to": "terima", "width": 1}, {"from": "Topic_3", "to": "yang", "width": 1}, {"from": "Topic_3", "to": "berhormat", "width": 1}, {"from": "Topic_3", "to": "sikit.", "width": 1}, {"from": "Topic_3", "to": "hingga", "width": 1}, {"from": "Topic_3", "to": "untuk", "width": 1}, {"from": "Topic_3", "to": "menteri.", "width": 1}, {"from": "Topic_3", "to": "dr.26.10.2021", "width": 1}, {"from": "Topic_3", "to": "Topic_4", "value": 8.99289608001709, "width": 1}, {"from": "Topic_3", "to": "Topic_5", "value": 6.01092529296875, "width": 1}, {"from": "Topic_3", "to": "Topic_6", "value": 9.686256408691406, "width": 1}, {"from": "Topic_3", "to": "Topic_7", "value": 9.524484634399414, "width": 1}, {"from": "Topic_3", "to": "Topic_9", "value": 9.627346992492676, "width": 1}, {"from": "Topic_3", "to": "Topic_10", "value": 6.840038776397705, "width": 1}, {"from": "Topic_3", "to": "Topic_12", "value": 9.859464645385742, "width": 1}, {"from": "Topic_3", "to": "Topic_13", "value": 8.923450469970703, "width": 1}, {"from": "Topic_3", "to": "Topic_14", "value": 6.777622222900391, "width": 1}, {"from": "Topic_3", "to": "Topic_15", "value": 7.404434680938721, "width": 1}, {"from": "Topic_3", "to": "Topic_16", "value": 7.267024993896484, "width": 1}, {"from": "Topic_3", "to": "Topic_17", "value": 7.277157783508301, "width": 1}, {"from": "Topic_3", "to": "Topic_18", "value": 8.496997833251953, "width": 1}, {"from": "Topic_3", "to": "Topic_19", "value": 6.868285655975342, "width": 1}, {"from": "Topic_4", "to": "boleh", "width": 1}, {"from": "Topic_4", "to": "saya", "width": 1}, {"from": "Topic_4", "to": "tadi", "width": 1}, {"from": "Topic_4", "to": "bagi.", "width": 1}, {"from": "Topic_4", "to": "ce", "width": 1}, {"from": "Topic_4", "to": "serupa", "width": 1}, {"from": "Topic_4", "to": "yang", "width": 1}, {"from": "Topic_4", "to": "berhormat.", "width": 1}, {"from": "Topic_4", "to": "dia", "width": 1}, {"from": "Topic_4", "to": "mengikut", "width": 1}, {"from": "Topic_4", "to": "Topic_5", "value": 8.671530723571777, "width": 1}, {"from": "Topic_4", "to": "Topic_6", "value": 9.669296264648438, "width": 1}, {"from": "Topic_4", "to": "Topic_7", "value": 9.48412799835205, "width": 1}, {"from": "Topic_4", "to": "Topic_9", "value": 7.840712070465088, "width": 1}, {"from": "Topic_4", "to": "Topic_11", "value": 7.241387367248535, "width": 1}, {"from": "Topic_4", "to": "Topic_12", "value": 9.161955833435059, "width": 1}, {"from": "Topic_4", "to": "Topic_13", "value": 7.153146266937256, "width": 1}, {"from": "Topic_4", "to": "Topic_15", "value": 9.506937026977539, "width": 1}, {"from": "Topic_4", "to": "Topic_18", "value": 9.762797355651855, "width": 1}, {"from": "Topic_5", "to": "boleh,", "width": 1}, {"from": "Topic_5", "to": "boleh", "width": 1}, {"from": "Topic_5", "to": "mesyuarat.", "width": 1}, {"from": "Topic_5", "to": "tempat", "width": 1}, {"from": "Topic_5", "to": "penjelasan", "width": 1}, {"from": "Topic_5", "to": "ialah.", "width": 1}, {"from": "Topic_5", "to": "senarai", "width": 1}, {"from": "Topic_5", "to": "Topic_6", "value": 7.329509735107422, "width": 1}, {"from": "Topic_5", "to": "Topic_7", "value": 7.722540378570557, "width": 1}, {"from": "Topic_5", "to": "Topic_11", "value": 9.547528266906738, "width": 1}, {"from": "Topic_5", "to": "Topic_12", "value": 6.133626937866211, "width": 1}, {"from": "Topic_5", "to": "Topic_15", "value": 9.689044952392578, "width": 1}, {"from": "Topic_5", "to": "Topic_18", "value": 9.055274963378906, "width": 1}, {"from": "Topic_6", "to": "boleh", "width": 1}, {"from": "Topic_6", "to": "tidak", "width": 1}, {"from": "Topic_6", "to": "saya", "width": 1}, {"from": "Topic_6", "to": "yang", "width": 1}, {"from": "Topic_6", "to": "sudah", "width": 1}, {"from": "Topic_6", "to": "itu", "width": 1}, {"from": "Topic_6", "to": "bangkitkan.", "width": 1}, {"from": "Topic_6", "to": "terima", "width": 1}, {"from": "Topic_6", "to": "kasih.", "width": 1}, {"from": "Topic_6", "to": "last", "width": 1}, {"from": "Topic_6", "to": "Topic_7", "value": 9.545620918273926, "width": 1}, {"from": "Topic_6", "to": "Topic_9", "value": 9.067469596862793, "width": 1}, {"from": "Topic_6", "to": "Topic_12", "value": 9.814797401428223, "width": 1}, {"from": "Topic_6", "to": "Topic_13", "value": 8.508935928344727, "width": 1}, {"from": "Topic_6", "to": "Topic_15", "value": 8.566841125488281, "width": 1}, {"from": "Topic_6", "to": "Topic_16", "value": 6.016641616821289, "width": 1}, {"from": "Topic_6", "to": "Topic_18", "value": 9.133430480957031, "width": 1}, {"from": "Topic_7", "to": "malaysia", "width": 1}, {"from": "Topic_7", "to": "hakikatnya.", "width": 1}, {"from": "Topic_7", "to": "bolehlah.", "width": 1}, {"from": "Topic_7", "to": "boleh.", "width": 1}, {"from": "Topic_7", "to": "inilah", "width": 1}, {"from": "Topic_7", "to": "hakikat", "width": 1}, {"from": "Topic_7", "to": "sebenarnya.", "width": 1}, {"from": "Topic_7", "to": "Topic_9", "value": 8.431983947753906, "width": 1}, {"from": "Topic_7", "to": "Topic_12", "value": 9.29684066772461, "width": 1}, {"from": "Topic_7", "to": "Topic_13", "value": 7.33632755279541, "width": 1}, {"from": "Topic_7", "to": "Topic_15", "value": 8.59719181060791, "width": 1}, {"from": "Topic_7", "to": "Topic_18", "value": 9.412019729614258, "width": 1}, {"from": "Topic_8", "to": "yang", "width": 1}, {"from": "Topic_8", "to": "dan", "width": 1}, {"from": "Topic_8", "to": "ini", "width": 1}, {"from": "Topic_8", "to": "saya", "width": 1}, {"from": "Topic_8", "to": "ada", "width": 1}, {"from": "Topic_8", "to": "untuk", "width": 1}, {"from": "Topic_8", "to": "tidak", "width": 1}, {"from": "Topic_8", "to": "dalam", "width": 1}, {"from": "Topic_8", "to": "deng", "width": 1}, {"from": "Topic_8", "to": "the", "width": 1}, {"from": "Topic_8", "to": "Topic_9", "value": 7.375093460083008, "width": 1}, {"from": "Topic_8", "to": "Topic_10", "value": 9.83527946472168, "width": 1}, {"from": "Topic_8", "to": "Topic_13", "value": 7.68178653717041, "width": 1}, {"from": "Topic_8", "to": "Topic_14", "value": 9.861505508422852, "width": 1}, {"from": "Topic_8", "to": "Topic_16", "value": 9.679242134094238, "width": 1}, {"from": "Topic_8", "to": "Topic_17", "value": 9.708114624023438, "width": 1}, {"from": "Topic_8", "to": "Topic_19", "value": 9.827625274658203, "width": 1}, {"from": "Topic_9", "to": "yang", "width": 1}, {"from": "Topic_9", "to": "itu", "width": 1}, {"from": "Topic_9", "to": "saya", "width": 1}, {"from": "Topic_9", "to": "tidak", "width": 1}, {"from": "Topic_9", "to": "tuan", "width": 1}, {"from": "Topic_9", "to": "boleh", "width": 1}, {"from": "Topic_9", "to": "terima", "width": 1}, {"from": "Topic_9", "to": "berhormat", "width": 1}, {"from": "Topic_9", "to": "bagi", "width": 1}, {"from": "Topic_9", "to": "ini", "width": 1}, {"from": "Topic_9", "to": "Topic_10", "value": 8.412540435791016, "width": 1}, {"from": "Topic_9", "to": "Topic_12", "value": 9.619969367980957, "width": 1}, {"from": "Topic_9", "to": "Topic_13", "value": 9.731878280639648, "width": 1}, {"from": "Topic_9", "to": "Topic_14", "value": 8.347491264343262, "width": 1}, {"from": "Topic_9", "to": "Topic_16", "value": 8.746092796325684, "width": 1}, {"from": "Topic_9", "to": "Topic_17", "value": 8.736625671386719, "width": 1}, {"from": "Topic_9", "to": "Topic_18", "value": 6.991083145141602, "width": 1}, {"from": "Topic_9", "to": "Topic_19", "value": 8.430147171020508, "width": 1}, {"from": "Topic_10", "to": "yang", "width": 1}, {"from": "Topic_10", "to": "gulung", "width": 1}, {"from": "Topic_10", "to": "berhormat.", "width": 1}, {"from": "Topic_10", "to": "gulung,", "width": 1}, {"from": "Topic_10", "to": "berhormat,", "width": 1}, {"from": "Topic_10", "to": "berhormat", "width": 1}, {"from": "Topic_10", "to": "timbalan", "width": 1}, {"from": "Topic_10", "to": "menteri,", "width": 1}, {"from": "Topic_10", "to": "gulung.", "width": 1}, {"from": "Topic_10", "to": "ya,", "width": 1}, {"from": "Topic_10", "to": "Topic_12", "value": 6.7284321784973145, "width": 1}, {"from": "Topic_10", "to": "Topic_13", "value": 8.64411449432373, "width": 1}, {"from": "Topic_10", "to": "Topic_14", "value": 9.989251136779785, "width": 1}, {"from": "Topic_10", "to": "Topic_16", "value": 9.951412200927734, "width": 1}, {"from": "Topic_10", "to": "Topic_17", "value": 9.964384078979492, "width": 1}, {"from": "Topic_10", "to": "Topic_19", "value": 9.981847763061523, "width": 1}, {"from": "Topic_11", "to": "boleh", "width": 1}, {"from": "Topic_11", "to": "satu", "width": 1}, {"from": "Topic_11", "to": "Topic_15", "value": 8.88729190826416, "width": 1}, {"from": "Topic_11", "to": "Topic_18", "value": 7.856378078460693, "width": 1}, {"from": "Topic_12", "to": "sila", "width": 1}, {"from": "Topic_12", "to": "sila.", "width": 1}, {"from": "Topic_12", "to": "tidak", "width": 1}, {"from": "Topic_12", "to": "yang", "width": 1}, {"from": "Topic_12", "to": "berhormat", "width": 1}, {"from": "Topic_12", "to": "sepert", "width": 1}, {"from": "Topic_12", "to": "demikian.", "width": 1}, {"from": "Topic_12", "to": "duduk.", "width": 1}, {"from": "Topic_12", "to": "terima", "width": 1}, {"from": "Topic_12", "to": "kasih.", "width": 1}, {"from": "Topic_12", "to": "Topic_13", "value": 9.214240074157715, "width": 1}, {"from": "Topic_12", "to": "Topic_14", "value": 6.627346992492676, "width": 1}, {"from": "Topic_12", "to": "Topic_15", "value": 7.613515853881836, "width": 1}, {"from": "Topic_12", "to": "Topic_16", "value": 7.189425468444824, "width": 1}, {"from": "Topic_12", "to": "Topic_17", "value": 7.155893325805664, "width": 1}, {"from": "Topic_12", "to": "Topic_18", "value": 8.491922378540039, "width": 1}, {"from": "Topic_12", "to": "Topic_19", "value": 6.743685722351074, "width": 1}, {"from": "Topic_13", "to": "...supaya", "width": 1}, {"from": "Topic_13", "to": "dapat", "width": 1}, {"from": "Topic_13", "to": "semula.", "width": 1}, {"from": "Topic_13", "to": "supaya", "width": 1}, {"from": "Topic_13", "to": "be", "width": 1}, {"from": "Topic_13", "to": "bahag", "width": 1}, {"from": "Topic_13", "to": "ini", "width": 1}, {"from": "Topic_13", "to": "ia", "width": 1}, {"from": "Topic_13", "to": "untuk", "width": 1}, {"from": "Topic_13", "to": "select", "width": 1}, {"from": "Topic_13", "to": "Topic_14", "value": 8.542778015136719, "width": 1}, {"from": "Topic_13", "to": "Topic_16", "value": 8.950453758239746, "width": 1}, {"from": "Topic_13", "to": "Topic_17", "value": 8.89651870727539, "width": 1}, {"from": "Topic_13", "to": "Topic_18", "value": 6.028757572174072, "width": 1}, {"from": "Topic_13", "to": "Topic_19", "value": 8.638753890991211, "width": 1}, {"from": "Topic_14", "to": "yang", "width": 1}, {"from": "Topic_14", "to": "cukup", "width": 1}, {"from": "Topic_14", "to": "berhormat.", "width": 1}, {"from": "Topic_14", "to": "cukup,", "width": 1}, {"from": "Topic_14", "to": "berhormat", "width": 1}, {"from": "Topic_14", "to": "berhormat,", "width": 1}, {"from": "Topic_14", "to": "cukup.", "width": 1}, {"from": "Topic_14", "to": "sudah", "width": 1}, {"from": "Topic_14", "to": "bagi", "width": 1}, {"from": "Topic_14", "to": "sudah.", "width": 1}, {"from": "Topic_14", "to": "Topic_16", "value": 9.933815956115723, "width": 1}, {"from": "Topic_14", "to": "Topic_17", "value": 9.961406707763672, "width": 1}, {"from": "Topic_14", "to": "Topic_19", "value": 9.984033584594727, "width": 1}, {"from": "Topic_15", "to": "boleh", "width": 1}, {"from": "Topic_15", "to": "lalu", "width": 1}, {"from": "Topic_15", "to": "duduk", "width": 1}, {"from": "Topic_15", "to": "kerana", "width": 1}, {"from": "Topic_15", "to": "Topic_18", "value": 9.595589637756348, "width": 1}, {"from": "Topic_16", "to": "dan", "width": 1}, {"from": "Topic_16", "to": "sudah", "width": 1}, {"from": "Topic_16", "to": "hangzhou.", "width": 1}, {"from": "Topic_16", "to": "mas", "width": 1}, {"from": "Topic_16", "to": "kargo", "width": 1}, {"from": "Topic_16", "to": "meningkat.", "width": 1}, {"from": "Topic_16", "to": "ada", "width": 1}, {"from": "Topic_16", "to": "itu", "width": 1}, {"from": "Topic_16", "to": "warehouse", "width": 1}, {"from": "Topic_16", "to": "hangzhou", "width": 1}, {"from": "Topic_16", "to": "Topic_17", "value": 9.970453262329102, "width": 1}, {"from": "Topic_16", "to": "Topic_19", "value": 9.953826904296875, "width": 1}, {"from": "Topic_17", "to": "tuan", "width": 1}, {"from": "Topic_17", "to": "pengerusi,", "width": 1}, {"from": "Topic_17", "to": "bukankah...", "width": 1}, {"from": "Topic_17", "to": "bukankah", "width": 1}, {"from": "Topic_17", "to": "bahawa...", "width": 1}, {"from": "Topic_17", "to": "Topic_19", "value": 9.962459564208984, "width": 1}, {"from": "Topic_18", "to": "adakah", "width": 1}, {"from": "Topic_18", "to": "enjelasan", "width": 1}, {"from": "Topic_18", "to": "lagi?", "width": 1}, {"from": "Topic_18", "to": "itu", "width": 1}, {"from": "Topic_18", "to": "sihat?", "width": 1}, {"from": "Topic_18", "to": "terima", "width": 1}, {"from": "Topic_18", "to": "kasih.", "width": 1}, {"from": "Topic_19", "to": "lee", "width": 1}, {"from": "Topic_19", "to": "chong", "width": 1}, {"from": "Topic_19", "to": "yang", "width": 1}, {"from": "Topic_19", "to": "soalan", "width": 1}, {"from": "Topic_19", "to": "wei", "width": 1}, {"from": "Topic_19", "to": "ada", "width": 1}, {"from": "Topic_19", "to": "berhormat,", "width": 1}, {"from": "Topic_19", "to": "lalu", "width": 1}, {"from": "Topic_19", "to": "berhormat", "width": 1}, {"from": "Topic_19", "to": "tentang", "width": 1}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {
+    "configure": {
+        "enabled": true,
+        "filter": [
+            "physics"
+        ]
+    },
+    "edges": {
+        "color": {
+            "inherit": true
+        },
+        "smooth": {
+            "enabled": true,
+            "type": "dynamic"
+        }
+    },
+    "interaction": {
+        "dragNodes": true,
+        "hideEdgesOnDrag": false,
+        "hideNodesOnDrag": false
+    },
+    "physics": {
+        "enabled": true,
+        "stabilization": {
+            "enabled": true,
+            "fit": true,
+            "iterations": 1000,
+            "onlyDynamicEdges": false,
+            "updateInterval": 50
+        }
+    }
+};
+
+                  
+
+
+                  
+                  // if this network requires displaying the configure window,
+                  // put it in its div
+                  options.configure["container"] = document.getElementById("config");
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+                      network.on("stabilizationProgress", function(params) {
+                          document.getElementById('loadingBar').removeAttribute("style");
+                          var maxWidth = 496;
+                          var minWidth = 20;
+                          var widthFactor = params.iterations/params.total;
+                          var width = Math.max(minWidth,maxWidth * widthFactor);
+                          document.getElementById('bar').style.width = width + 'px';
+                          document.getElementById('text').innerHTML = Math.round(widthFactor*100) + '%';
+                      });
+                      network.once("stabilizationIterationsDone", function() {
+                          document.getElementById('text').innerHTML = '100%';
+                          document.getElementById('bar').style.width = '496px';
+                          document.getElementById('loadingBar').style.opacity = 0;
+                          // really clean the dom element
+                          setTimeout(function () {document.getElementById('loadingBar').style.display = 'none';}, 500);
+                      });
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>
