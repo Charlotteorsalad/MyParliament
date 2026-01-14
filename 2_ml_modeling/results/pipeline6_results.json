@@ -1,0 +1,11 @@
+{
+  "pipeline": "06_e5_large_sota",
+  "n_clusters": 20,
+  "sample_size": 20000,
+  "silhouette": 0.02218933403491974,
+  "coherence_cv": 0.5374993470149672,
+  "coherence_npmi": 0.0729742086279643,
+  "topic_diversity": 0.645,
+  "saved_at": "2026-01-14T17:44:44.607028",
+  "description": "External SOTA: Pure Multilingual-E5-Large embeddings + Agglomerative Clustering on lightly cleaned text (no CPATF, no hybrid)"
+}
