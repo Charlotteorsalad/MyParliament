@@ -353,32 +353,26 @@ def parse_ordinal(text: str) -> Optional[int]:
 def extract_header_metadata(text: str) -> Dict[str, Optional[int]]:
     """
     Extract parlimen/penggal/mesyuarat from document header text.
-    Returns numeric values when possible, plus raw text for auditing.
+    Returns numeric values when possible.
     """
     result = {
         "parlimen": None,
         "penggal": None,
-        "mesyuarat": None,
-        "parlimen_text": None,
-        "penggal_text": None,
-        "mesyuarat_text": None
+        "mesyuarat": None
     }
     if not text:
         return result
 
     for line in text.splitlines()[:80]:
         upper = line.upper().strip()
-        if "PARLIMEN" in upper and result["parlimen_text"] is None:
+        if "PARLIMEN" in upper and result["parlimen"] is None:
             after = upper.split("PARLIMEN", 1)[1].strip()
-            result["parlimen_text"] = after or None
             result["parlimen"] = parse_ordinal(after)
-        if "PENGGAL" in upper and result["penggal_text"] is None:
+        if "PENGGAL" in upper and result["penggal"] is None:
             after = upper.split("PENGGAL", 1)[1].strip()
-            result["penggal_text"] = after or None
             result["penggal"] = parse_ordinal(after)
-        if "MESYUARAT" in upper and result["mesyuarat_text"] is None:
+        if "MESYUARAT" in upper and result["mesyuarat"] is None:
             after = upper.split("MESYUARAT", 1)[1].strip()
-            result["mesyuarat_text"] = after or None
             result["mesyuarat"] = parse_ordinal(after)
 
     return result
