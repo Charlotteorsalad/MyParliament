@@ -351,26 +351,70 @@ def _raw_text_from_doc(doc):
     return (doc.get("content_text") or "").strip()
 
 
-def fetch_raw_documents(collection, batch_size=500, skip=0):
-    """Fetch HansardDocument docs with ocr_text or content_text for P1/P2 (raw baseline)."""
+def fetch_raw_documents(collection, batch_size=500, skip=0, incremental_since=None):
+    """
+    Fetch HansardDocument docs with ocr_text or content_text for P1/P2 (raw baseline).
+    
+    Args:
+        collection: MongoDB collection
+        batch_size: Number of documents to fetch
+        skip: Number of documents to skip
+        incremental_since: If set, only fetch documents with hansardDate >= this date
+    """
+    query = {"$or": [{"ocr_text": {"$exists": True, "$ne": ""}}, {"content_text": {"$exists": True, "$ne": ""}}]}
+    
+    # Add incremental date filter
+    if incremental_since:
+        query = {"$and": [query, {"hansardDate": {"$gte": incremental_since}}]}
+    
     cursor = collection.find(
-        {"$or": [{"ocr_text": {"$exists": True, "$ne": ""}}, {"content_text": {"$exists": True, "$ne": ""}}]},
+        query,
         {"_id": 1, "ocr_text": 1, "content_text": 1, "hansardDate": 1}
     ).skip(skip).limit(batch_size)
     return list(cursor)
 
 
-def fetch_segmented_documents(collection, batch_size=500, skip=0):
+def fetch_segmented_documents(collection, batch_size=500, skip=0, incremental_since=None):
+    """
+    Fetch segmented documents.
+    
+    Args:
+        collection: MongoDB collection
+        batch_size: Number of documents to fetch
+        skip: Number of documents to skip
+        incremental_since: If set, only fetch documents with hansardDate >= this date
+    """
+    query = {"segmentation_output": {"$exists": True}}
+    
+    # Add incremental date filter
+    if incremental_since:
+        query["hansardDate"] = {"$gte": incremental_since}
+    
     cursor = collection.find(
-        {"segmentation_output": {"$exists": True}},
+        query,
         {"_id": 1, "segmentation_output": 1, "full_text": 1, "content_text": 1, "hansardDate": 1}
     ).skip(skip).limit(batch_size)
     return list(cursor)
 
 
-def fetch_cpatf_documents(collection, batch_size=500, skip=0):
+def fetch_cpatf_documents(collection, batch_size=500, skip=0, incremental_since=None):
+    """
+    Fetch CPATF cleaned documents.
+    
+    Args:
+        collection: MongoDB collection
+        batch_size: Number of documents to fetch
+        skip: Number of documents to skip
+        incremental_since: If set, only fetch documents with hansardDate >= this date
+    """
+    query = {"cleaned_text": {"$exists": True, "$ne": ""}}
+    
+    # Add incremental date filter
+    if incremental_since:
+        query["hansardDate"] = {"$gte": incremental_since}
+    
     cursor = collection.find(
-        {"cleaned_text": {"$exists": True, "$ne": ""}},
+        query,
         {"_id": 1, "cleaned_text": 1, "hansardDate": 1}
     ).skip(skip).limit(batch_size)
     return list(cursor)
@@ -834,11 +878,14 @@ def _sanitize_for_mongodb(obj):
         return obj
 
 
-def save_to_mongodb(result):
+def save_to_mongodb(result, incremental_mode=False):
     """
     Write inference result to MongoDB. Same DB as 2_ml_modeling; different sink:
     - 2_ml_modeling: local files (results/pipelineN_results.json, model/*.pkl).
     - Production: MongoDB MyParliament.hansard_inference (one doc per pipelineId, upsert).
+    
+    Incremental mode: Overwrites entire document (clustering is global, not append-only).
+    Full mode: Same as incremental - clustering requires all documents.
     
     IMPORTANT: Sanitizes all numpy types to Python native types before saving.
     """
@@ -848,6 +895,8 @@ def save_to_mongodb(result):
     client = MongoClient(MONGO_URI)
     db = client["MyParliament"]
     collection = db["hansard_inference"]
+    
+    # Always overwrite (clustering is global)
     collection.update_one(
         {"pipelineId": sanitized_result["pipelineId"]},
         {"$set": sanitized_result},
@@ -866,11 +915,38 @@ def main():
     parser.add_argument("--pipelines", type=str, default="all")
     parser.add_argument("--max-docs", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true", help="Run inference but do not write to MongoDB (safe to test)")
+    
+    # Incremental inference options
+    parser.add_argument("--incremental", action="store_true", help="Incremental mode: only infer on new documents from recent days")
+    parser.add_argument("--incremental-days", type=int, default=7, help="Days to look back for incremental inference (default: 7)")
+    parser.add_argument("--incremental-since", type=str, default=None, help="Infer docs since date (YYYY-MM-DD format)")
+    parser.add_argument("--full-reinfer", action="store_true", help="Full reinference mode: rerun inference on ALL documents (monthly maintenance)")
+    
     args = parser.parse_args()
 
     pipelines_to_run = list(PIPELINE_CONFIGS.keys()) if args.pipelines == "all" else [
         f"pipeline{p}" if not p.startswith("pipeline") else p for p in args.pipelines.split(",")
     ]
+    
+    # Determine incremental mode
+    incremental_since = None
+    if args.incremental:
+        # Default incremental: last N days
+        from datetime import timedelta
+        incremental_since = datetime.now() - timedelta(days=args.incremental_days)
+        print(f"=== INCREMENTAL INFERENCE MODE: Processing documents from last {args.incremental_days} days ===")
+    elif args.incremental_since:
+        # Explicit date
+        try:
+            incremental_since = datetime.strptime(args.incremental_since, "%Y-%m-%d")
+            print(f"=== INCREMENTAL INFERENCE MODE: Processing documents since {args.incremental_since} ===")
+        except ValueError:
+            print(f"Error: Invalid date format '{args.incremental_since}'. Use YYYY-MM-DD")
+            return
+    elif args.full_reinfer:
+        print("=== FULL REINFERENCE MODE: Processing ALL documents (monthly maintenance) ===")
+    else:
+        print("=== STANDARD INFERENCE MODE: Processing all available documents ===")
 
     client = MongoClient(MONGO_URI)
     db = client["MyParliament"]
@@ -878,18 +954,50 @@ def main():
     cpatf_col = db["hansard_cpatf"]
 
     for pipeline_id in pipelines_to_run:
+        # Check for new documents in incremental mode
+        if incremental_since:
+            # Get existing inference
+            existing_inference = db["hansard_inference"].find_one({"pipelineId": pipeline_id})
+            existing_doc_ids = set(str(d) for d in existing_inference.get("docIds", [])) if existing_inference else set()
+            
+            # Count new documents
+            if pipeline_id in ("pipeline1", "pipeline2"):
+                new_doc_query = {
+                    "$and": [
+                        {"$or": [{"ocr_text": {"$exists": True, "$ne": ""}}, {"content_text": {"$exists": True, "$ne": ""}}]},
+                        {"hansardDate": {"$gte": incremental_since}}
+                    ]
+                }
+                new_doc_count = raw_col.count_documents(new_doc_query)
+            else:
+                new_doc_query = {
+                    "cleaned_text": {"$exists": True, "$ne": ""},
+                    "hansardDate": {"$gte": incremental_since}
+                }
+                new_doc_count = cpatf_col.count_documents(new_doc_query)
+            
+            print(f"\n{pipeline_id}: Found {new_doc_count} new documents since {incremental_since.date()}")
+            
+            if new_doc_count == 0:
+                print(f"  → Skipping (no new documents)")
+                continue
+            
+            print(f"  → Will re-cluster ALL documents (incremental only checks for new docs)")
+        
+        # Fetch documents (all documents, not just new ones)
+        # Incremental mode: trigger re-clustering if new docs exist, but cluster all docs for consistency
         if pipeline_id in ("pipeline1", "pipeline2"):
-            total_docs = raw_col.count_documents(
-                {"$or": [{"ocr_text": {"$exists": True, "$ne": ""}}, {"content_text": {"$exists": True, "$ne": ""}}]}
-            )
+            query = {"$or": [{"ocr_text": {"$exists": True, "$ne": ""}}, {"content_text": {"$exists": True, "$ne": ""}}]}
+            total_docs = raw_col.count_documents(query)
             if args.max_docs:
                 total_docs = min(total_docs, args.max_docs)
-            documents = fetch_raw_documents(raw_col, batch_size=total_docs, skip=0)
+            documents = fetch_raw_documents(raw_col, batch_size=total_docs, skip=0, incremental_since=None)
         else:
-            total_docs = cpatf_col.count_documents({"cleaned_text": {"$exists": True, "$ne": ""}})
+            query = {"cleaned_text": {"$exists": True, "$ne": ""}}
+            total_docs = cpatf_col.count_documents(query)
             if args.max_docs:
                 total_docs = min(total_docs, args.max_docs)
-            documents = fetch_cpatf_documents(cpatf_col, batch_size=total_docs, skip=0)
+            documents = fetch_cpatf_documents(cpatf_col, batch_size=total_docs, skip=0, incremental_since=None)
 
         if args.max_docs:
             documents = documents[:args.max_docs]
@@ -900,12 +1008,22 @@ def main():
                   f"For P1/P2 ensure {coll} has ocr_text or content_text.")
             continue
 
+        print(f"\nProcessing {pipeline_id}: {len(documents)} documents (full re-clustering)")
         result = run_pipeline_inference(pipeline_id, documents, args.batch_size)
+        
+        # Add incremental metadata to result
+        if incremental_since:
+            result["incremental_mode"] = True
+            result["incremental_since"] = incremental_since.isoformat()
+        else:
+            result["incremental_mode"] = False
+        
         if args.dry_run:
             print(f"[dry-run] Would save {pipeline_id} to hansard_inference (skipped)")
         else:
-            save_to_mongodb(result)
-            print(f"Saved {pipeline_id} inference to MongoDB")
+            save_to_mongodb(result, incremental_mode=bool(incremental_since))
+            mode_label = "incremental" if incremental_since else "full"
+            print(f"Saved {pipeline_id} inference to MongoDB ({mode_label} mode)")
 
     client.close()
 

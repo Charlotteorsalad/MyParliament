@@ -740,8 +740,18 @@ def _process_single_doc_cpatf(doc):
 def run_segmentation(
     max_docs: Optional[int] = None,
     only_missing: bool = True,
-    check_existing: bool = True
+    check_existing: bool = True,
+    incremental_since: Optional[datetime] = None
 ):
+    """
+    Run segmentation pipeline.
+    
+    Args:
+        max_docs: Limit number of documents to process
+        only_missing: If True, skip documents already in segmented collection
+        check_existing: If True, check DB for existing docs before processing
+        incremental_since: If set, only process documents with hansardDate >= this date (incremental mode)
+    """
     db = get_db_connection()
     hansard_col = db[CONFIG["SOURCE_COLLECTION"]]
     segmented_col = db[CONFIG["SEGMENTED_COLLECTION"]]
@@ -769,6 +779,9 @@ def run_segmentation(
     use_process_pool = executor_type == "process"
     processed_ids = set(segmented_col.distinct("original_id")) if only_missing else set()
     processed_ids_lock = threading.Lock() if (check_existing and not use_process_pool) else None
+    
+    # Build query filter
+    query_filter = {}
     if processed_ids:
         object_ids = []
         for pid in processed_ids:
@@ -777,8 +790,14 @@ def run_segmentation(
             except Exception:
                 continue
         query_filter = {"_id": {"$nin": object_ids}}
-    else:
-        query_filter = {}
+    
+    # Add incremental date filter (only process new docs since specified date)
+    if incremental_since:
+        if query_filter:
+            query_filter = {"$and": [query_filter, {"hansardDate": {"$gte": incremental_since}}]}
+        else:
+            query_filter = {"hansardDate": {"$gte": incremental_since}}
+        print(f"Incremental mode: processing documents since {incremental_since.date()}")
 
     cursor = hansard_col.find(query_filter, {
         "_id": 1,
@@ -1066,8 +1085,18 @@ def process_long_segment(segment: str, get_lang_indicator, honorifics: set, max_
 def run_cpatf(
     max_docs: Optional[int] = None,
     only_missing: bool = True,
-    check_existing: bool = True
+    check_existing: bool = True,
+    incremental_since: Optional[datetime] = None
 ):
+    """
+    Run CPATF cleaning pipeline.
+    
+    Args:
+        max_docs: Limit number of documents to process
+        only_missing: If True, skip documents already in CPATF collection
+        check_existing: If True, check DB for existing docs before processing
+        incremental_since: If set, only process documents with hansardDate >= this date (incremental mode)
+    """
     db = get_db_connection()
     segmented_col = db[CONFIG["SEGMENTED_COLLECTION"]]
     cpatf_col = db[CONFIG["CPATF_COLLECTION"]]
@@ -1093,7 +1122,20 @@ def run_cpatf(
 
     processed_ids = set(cpatf_col.distinct("original_id")) if only_missing else set()
     processed_ids_lock = threading.Lock() if (check_existing and not use_process_pool) else None
-    query_filter = {"original_id": {"$nin": list(processed_ids)}} if processed_ids else {}
+    
+    # Build query filter
+    query_filter = {}
+    if processed_ids:
+        query_filter = {"original_id": {"$nin": list(processed_ids)}}
+    
+    # Add incremental date filter (only process new docs since specified date)
+    if incremental_since:
+        date_filter = {"hansardDate": {"$gte": incremental_since}}
+        if query_filter:
+            query_filter = {"$and": [query_filter, date_filter]}
+        else:
+            query_filter = date_filter
+        print(f"Incremental mode: processing documents since {incremental_since.date()}")
 
     cursor = segmented_col.find(query_filter, {
         "_id": 1,
@@ -1199,19 +1241,61 @@ def main():
     parser.add_argument("--backfill-segmented-metadata", action="store_true", help="Backfill segmented metadata from headers")
     parser.add_argument("--backfill-limit", type=int, default=None, help="Limit backfill updates")
     parser.add_argument("--skip-exists-check", action="store_true", help="Disable DB existence check before processing")
+    
+    # Incremental processing options
+    parser.add_argument("--incremental", action="store_true", help="Incremental mode: only process new documents from recent days")
+    parser.add_argument("--incremental-days", type=int, default=7, help="Days to look back for incremental processing (default: 7)")
+    parser.add_argument("--incremental-since", type=str, default=None, help="Process docs since date (YYYY-MM-DD format)")
+    parser.add_argument("--full-reprocess", action="store_true", help="Full reprocess mode: reprocess ALL documents (monthly maintenance)")
+    
     args = parser.parse_args()
 
     only_missing = not args.process_all
     check_existing = not args.skip_exists_check
+    
+    # Determine incremental mode
+    incremental_since = None
+    if args.incremental:
+        # Default incremental: last N days
+        from datetime import timedelta
+        incremental_since = datetime.now() - timedelta(days=args.incremental_days)
+        print(f"=== INCREMENTAL MODE: Processing documents from last {args.incremental_days} days ===")
+    elif args.incremental_since:
+        # Explicit date
+        try:
+            incremental_since = datetime.strptime(args.incremental_since, "%Y-%m-%d")
+            print(f"=== INCREMENTAL MODE: Processing documents since {args.incremental_since} ===")
+        except ValueError:
+            print(f"Error: Invalid date format '{args.incremental_since}'. Use YYYY-MM-DD")
+            return
+    elif args.full_reprocess:
+        # Full reprocess: override only_missing
+        only_missing = False
+        check_existing = False
+        print("=== FULL REPROCESS MODE: Processing ALL documents (monthly maintenance) ===")
+    elif only_missing:
+        print("=== RESUME MODE: Processing only missing documents ===")
+    else:
+        print("=== PROCESS ALL MODE ===")
 
     if args.backfill_segmented_metadata:
         backfill_segmented_metadata(limit=args.backfill_limit)
         return
 
     if not args.skip_segmentation:
-        run_segmentation(max_docs=args.max_docs, only_missing=only_missing, check_existing=check_existing)
+        run_segmentation(
+            max_docs=args.max_docs, 
+            only_missing=only_missing, 
+            check_existing=check_existing,
+            incremental_since=incremental_since
+        )
     if not args.skip_cpatf:
-        run_cpatf(max_docs=args.max_docs, only_missing=only_missing, check_existing=check_existing)
+        run_cpatf(
+            max_docs=args.max_docs, 
+            only_missing=only_missing, 
+            check_existing=check_existing,
+            incremental_since=incremental_since
+        )
 
 
 if __name__ == "__main__":

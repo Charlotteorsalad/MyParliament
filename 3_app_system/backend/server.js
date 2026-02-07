@@ -20,6 +20,7 @@ const forumRoutes = require('./routes/forum');
 const bookmarkRoutes = require('./routes/bookmarks');
 const quizRoutes = require('./routes/quiz');
 const reportRoutes = require('./routes/reports');
+const issuePortalRoutes = require('./routes/issuePortal');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -275,6 +276,7 @@ app.use('/api/admin/feedback', feedbackRoutes);
 app.use('/api/admin/forum-moderation', forumModerationRoutes);
 app.use('/api/admin/technical-support', technicalSupportRoutes);
 app.use('/api/topics', topicRoutes);
+app.use('/api/issue-portal', issuePortalRoutes);
 app.use(notFound);       
 app.use(errorHandler);  
 
