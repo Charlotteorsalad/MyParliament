@@ -17,6 +17,8 @@
 5. [Features — Admin Side](#5-features--admin-side)
 6. [Machine Learning Pipeline](#6-machine-learning-pipeline)
 7. [ML Model Performance](#7-ml-model-performance)
+8. [Acknowledgements & Open Data Sources](#8-acknowledgements-&-open-data-sources)
+9. [Copyright & Intellectual Property](#9-copyright-&-intellectual-property)
 
 ---
 
@@ -65,6 +67,8 @@ The system is backed by an automated **Python data pipeline** that scrapes Hansa
 | Scraping | BeautifulSoup, pdfplumber / PyMuPDF |
 | Scheduling | Python + cron (Linux) / Windows Task Scheduler |
 | Maps | react-simple-maps |
+| Language Detect | FastText |
+| POS/NER | spaCy |
 ---
 
 ## 4. Features — User Side
@@ -162,7 +166,7 @@ Accessed at `/admin` — separate login with 2FA (Google Authenticator).
 <img width="1919" height="1030" alt="image" src="https://github.com/user-attachments/assets/da2214b4-02ff-47d6-be1b-310936352a2f" />
 
 ### 5.2 Admin User Management
-- A page that only superadmin can access to.
+- Accessible only to the superadmin.
 - Manage admin accounts.
 - View admin accounts' logs.
 <img width="1908" height="1030" alt="image" src="https://github.com/user-attachments/assets/faea0acb-e0a6-44f1-85e5-3fdf1143644e" />
@@ -246,21 +250,21 @@ Accessed at `/admin` — separate login with 2FA (Google Authenticator).
 ---
 
 ## 6. Machine Learning Pipeline
+
 The system uses two sequential pipelines: a **Data Pipeline** that collects and cleans raw parliamentary text, and an **Inference Pipeline** that applies ML models to produce insights.
+
 ---
 ### 6.1 Data Pipeline — Raw Web to Clean Text
+<img width="1240" height="693" alt="image" src="https://github.com/user-attachments/assets/eafd19d6-a85c-433f-b5df-71777d5d07e4" />
 <img width="500" height="1200" alt="Hansard Data Processing-2026-03-28-194055" src="https://github.com/user-attachments/assets/0ffbe824-d79a-4812-8d3b-8f716139e203" />
 
-**CPATF** is a four-stage text normalisation pipeline:
-- **Clean** — remove noise, fix encoding, strip headers/footers
-- **Parse** — segment speeches by speaker and turn
-- **Tokenise** — word and sentence tokenisation
-- **Filter** — remove stopwords, short turns, boilerplate
+**CPATF** (Code-switched Parliament-Aware Token Filtering) is a domain-specific preprocessing module for bilingual (Malay-English) Hansard text. It assigns each token a retention score based on language confidence (FastText), POS category (spaCy), NER type, and a redundancy penalty for repeated honorifics. Only tokens exceeding threshold θ=0.6 are retained, producing clean, content-rich segments for downstream topic modelling.
   
-<img width="1240" height="693" alt="image" src="https://github.com/user-attachments/assets/eafd19d6-a85c-433f-b5df-71777d5d07e4" />
-
 ---
+
 ### 6.2 Inference Pipeline — Clean Text to Insights
+**MEHTC** (Multi-Evidence Hybrid Topic Clustering) combines three similarity signals into one matrix: TF-IDF lexical overlap (α), neural embedding cosine similarity (β), and weighted entity Jaccard (γ). Agglomerative Clustering is then applied to this hybrid matrix. Pipelines 3–6 progressively upgrade the β component from zero (entity-only) to zero-shot XLM-R to LoRA fine-tuned XLM-R.
+
 Runs daily (scheduled via `takwim_scheduler.py`) or manually.
 
 | Step | Script | Input | Output |
@@ -271,16 +275,16 @@ Runs daily (scheduled via `takwim_scheduler.py`) or manually.
 | 4 | `topic_analysis.py` | all above | hansard_analysis |
 
 **Step 1 — Topic Clustering (6 Pipelines)**
-Six parallel pipelines using different models and text combinations:
+Six comparative pipelines using different models and text combinations:
 
 | Pipeline | Model | Text Source |
 |---|---|---|
-| P1 | BERTopic | Raw OCR text (HansardDocument) |
-| P2 | LDA | Raw OCR text (HansardDocument) |
-| P3 | BERTopic | CPATF cleaned text |
-| P4 | LDA | CPATF cleaned text |
-| P5 | BERTopic (tuned) | CPATF cleaned text |
-| P6 | LDA (tuned) | CPATF cleaned text |
+| P1 | TF-IDF + KMeans | Raw OCR text (HansardDocument) |
+| P2 | TF-IDF + LDA	 | Raw OCR text (HansardDocument) |
+| P3 | MEHTC — Entity Only (α + γ, β=0)	 | CPATF cleaned text |
+| P4 | MEHTC + XLM-R Zero-shot (α + β + γ)	 | CPATF cleaned text |
+| P5 | MEHTC + LoRA Fine-tuned XLM-R	 | CPATF cleaned text |
+| P6 | Multilingual-E5-Large (SOTA baseline)	 | CPATF cleaned text |
 
 Each pipeline clusters parliamentary speeches into topics and writes results to `hansard_inference`.
 
@@ -389,3 +393,57 @@ LoRA adapts only a small number of attention weight matrices rather than all 278
 The large negative gaps for Silhouette and C_V (test metrics **exceed** training metrics) indicate that the LoRA fine-tuned embeddings learned representations that generalise well to unseen parliamentary text, rather than overfitting to the training split. The NPMI flip from negative (train) to positive (test) is particularly notable: the fine-tuned model better captures co-occurring political concepts in held-out sessions it was never trained on.
 
 <img width="1584" height="275" alt="image" src="https://github.com/user-attachments/assets/263cd830-166f-4ead-b51a-2ab9c4c18cc9" />
+
+---
+### 7.2 Sentiment Analysis
+
+| Setting | Value |
+|---|---|
+| Model | `joeddav/xlm-roberta-large-xnli` |
+| Approach | Zero-shot (no fine-tuning required) |
+| Labels | positive / negative / neutral |
+| Languages | English + Bahasa Malaysia |
+| Max token length | 256 |
+| Batch size | 16 |
+
+---
+### 7.3 ARIMA Forecasting
+
+| Setting | Value |
+|---|---|
+| Model | ARIMA(1, 1, 0) |
+| Forecast horizon | 3 parliament sessions |
+| Scope | High / medium quality topics only |
+| Session mapping | Session_range.xlsx |
+
+---
+### 7.4 Forum Content Moderation
+
+| Component | Detail |
+|---|---|
+| Layer 1 | Keyword blocklist (deterministic, zero latency) |
+| Layer 2 | HuggingFace classifier |
+| Timeout | 30s (`MODERATION_TIMEOUT_MS`) |
+| Fallback | Fail-open (post allowed if service unreachable) |
+
+## 8. Acknowledgements & Open Data Sources
+
+The development of **MyParliament** was made possible through the integration of several high-quality open-source datasets and Malaysian government digital resources. We would like to express our gratitude to the following:
+
+| Source | Resource Type | Application in Project | Resource Link |
+| :--- | :--- | :--- | :--- |
+| **Official Parliament of Malaysia** | Hansard PDF Documents | Primary source for all parliamentary debate text, scraped and processed via our data pipeline. | [parlimen.gov.my](https://www.parlimen.gov.my/hansard-dewan-negara.html?uweb=dn&) |
+| **Malaysia GeoJSON** | Geospatial Data | Provided the boundary coordinates for the interactive constituency map in the MP Dashboard. | [github.com/mptwaktusolat/jakim.geojson](https://github.com/mptwaktusolat/jakim.geojson/blob/master/malaysia.district.geojson) |
+| **Malay Stopwords** | NLP Linguistic Data | Critical for the CPATF pipeline to filter noise and improve topic clustering coherence. | [github.com/stopwords-iso/stopwords-ms](https://github.com/stopwords-iso/stopwords-ms) |
+
+---
+
+## 9. Copyright & Intellectual Property
+
+**© 2026 MyParliament Project. All Rights Reserved.**
+
+This platform, including its unique **CPATF** (Code-switched Parliament-Aware Token Filtering) and **MEHTC** (Multi-Evidence Hybrid Topic Clustering) methodologies, system architecture, and integrated codebase, is the intellectual property of the developer.
+
+* **Software License:** The source code is currently restricted for private use. Redistribution, modification, or commercial use without explicit written consent is prohibited.
+* **Data Usage:** While the platform utilizes public domain government data (Hansard), the processed insights, clustered topics, and generated forecasts are proprietary outputs of the MyParliament ML engine.
+* **Contact:** For licensing inquiries or collaborative research opportunities regarding the MEHTC-LoRA implementation, please contact the project administrator via the platform's Technical Support module.
