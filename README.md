@@ -428,7 +428,7 @@ The large negative gaps for Silhouette and C_V (test metrics **exceed** training
 
 ## 8. Acknowledgements & Open Data Sources
 
-The development of **MyParliament** was made possible through the integration of several high-quality open-source datasets and Malaysian government digital resources. We would like to express our gratitude to the following:
+The development of **MyParliament** was made possible through the integration of several high-quality open-source datasets and Malaysian government digital resources. I would like to express our gratitude to the following:
 
 | Source | Resource Type | Application in Project | Resource Link |
 | :--- | :--- | :--- | :--- |
