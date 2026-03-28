@@ -263,7 +263,7 @@ The system uses two sequential pipelines: a **Data Pipeline** that collects and 
 ---
 
 ### 6.2 Inference Pipeline — Clean Text to Insights
-**MEHTC** (Multi-Evidence Hybrid Topic Clustering) combines three similarity signals into one matrix: TF-IDF lexical overlap (α), neural embedding cosine similarity (β), and weighted entity Jaccard (γ). Agglomerative Clustering is then applied to this hybrid matrix. Pipelines 3–6 progressively upgrade the β component from zero (entity-only) to zero-shot XLM-R to LoRA fine-tuned XLM-R.
+**MEHTC** (Multi-Embedding Hybrid Topic Clustering) combines three similarity signals into one matrix: TF-IDF lexical overlap (α), neural embedding cosine similarity (β), and weighted entity Jaccard (γ). Agglomerative Clustering is then applied on the (1 − sim) distance matrix. Pipelines 3–6 progressively upgrade the β component from zero (entity-only) to zero-shot XLM-R to LoRA fine-tuned XLM-R.
 
 Runs daily (scheduled via `takwim_scheduler.py`) or manually.
 
