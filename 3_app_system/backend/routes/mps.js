@@ -8,6 +8,7 @@ const Mp = require('../models/Mp');
 router.get('/featured', mpController.getFeatured);
 router.get('/stats', mpController.getStats);
 router.get('/list', mpController.getList);
+router.get('/by-name', mpController.getDetailByName);
 router.get('/detail/:id', mpController.getDetail);
 router.get('/:id', mpController.getDetail); // Allow direct MP ID access (must be last)
 router.get('/', mpController.getList); // Add root route for query parameters (must be last)

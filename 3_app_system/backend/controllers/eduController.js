@@ -23,3 +23,15 @@ exports.getEduById = async (req, res) => {
     res.status(500).json({ message: "Failed to get educational resource", error: err.message });
   }
 };
+
+exports.incrementView = async (req, res) => {
+  try {
+    await eduService.incrementView(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    if (err.message === 'Educational resource not found') {
+      return res.status(404).json({ message: err.message });
+    }
+    res.status(500).json({ message: "Failed to increment view", error: err.message });
+  }
+};

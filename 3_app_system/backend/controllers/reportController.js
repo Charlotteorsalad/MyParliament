@@ -17,8 +17,12 @@ exports.getPlatformStats = async (req, res) => {
 // Get topic categories report
 exports.getTopicCategoriesReport = async (req, res) => {
   try {
-    const { period = '30d' } = req.query;
-    const report = await reportService.getTopicCategoriesReport(period);
+    const { period = '30d', topViewedLimit } = req.query;
+    const limit =
+      topViewedLimit != null && Number.isFinite(parseInt(topViewedLimit, 10))
+        ? parseInt(topViewedLimit, 10)
+        : undefined;
+    const report = await reportService.getTopicCategoriesReport(period, limit);
     res.json(report);
   } catch (error) {
     console.error('Error in getTopicCategoriesReport:', error);
@@ -32,8 +36,8 @@ exports.getTopicCategoriesReport = async (req, res) => {
 // Get MP performance report
 exports.getMPPerformanceReport = async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
-    const report = await reportService.getMPPerformanceReport(parseInt(limit));
+    const { limit = 10, mode = 'current' } = req.query;
+    const report = await reportService.getMPPerformanceReport(parseInt(limit), mode);
     res.json(report);
   } catch (error) {
     console.error('Error in getMPPerformanceReport:', error);
@@ -107,7 +111,8 @@ exports.getFeedbackStats = async (req, res) => {
 exports.getDashboardData = async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
-    const data = await reportService.getDashboardData(userId);
+    const period = req.query.period || '30d';
+    const data = await reportService.getDashboardData(userId, period);
     res.json(data);
   } catch (error) {
     console.error('Error in getDashboardData:', error);
@@ -161,57 +166,17 @@ exports.exportReport = async (req, res) => {
   }
 };
 
-// Get user's personal reports summary
+// Get user's personal reports summary (real data from DB)
 exports.getUserReportsSummary = async (req, res) => {
   try {
     const userId = req.user.id;
-    
-    // Get various user-specific data
-    const [
-      userActivity,
-      bookmarkedTopics,
-      userForumTopics,
-      userEduProgress
-    ] = await Promise.all([
-      reportService.getUserActivityReport(userId),
-      // Add more specific queries as needed
-      Promise.resolve([]),
-      Promise.resolve([]),
-      Promise.resolve([])
-    ]);
-
-    const summary = {
-      user: userActivity.user,
-      quickStats: {
-        bookmarks: userActivity.activity.bookmarks.total,
-        discussions: userActivity.activity.discussions.total,
-        learning: userActivity.activity.learning.resources,
-        activities: userActivity.activity.engagement.totalActivities
-      },
-      lastUpdated: new Date(),
-      availableReports: [
-        'activity-summary',
-        'learning-progress',
-        'mp-interactions',
-        'discussion-history',
-        'bookmark-collection',
-        'feedback-surveys',
-        'voting-history',
-        'topic-interests',
-        'engagement-timeline',
-        'community-impact',
-        'learning-achievements',
-        'notification-history',
-        'platform-usage-stats'
-      ]
-    };
-
+    const summary = await reportService.getUserReportsSummary(userId);
     res.json(summary);
   } catch (error) {
     console.error('Error in getUserReportsSummary:', error);
-    res.status(500).json({ 
-      message: "Failed to get user reports summary", 
-      error: error.message 
+    res.status(500).json({
+      message: 'Failed to get user reports summary',
+      error: error.message
     });
   }
 };

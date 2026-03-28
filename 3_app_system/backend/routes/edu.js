@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { getAllEdu, getEduById } = require('../controllers/eduController');
-const { EduResource } = require('../models/EduResource');
+const { getAllEdu, getEduById, incrementView } = require('../controllers/eduController');
 
 router.get('/', getAllEdu);
+router.patch('/:id/view', incrementView);
 router.get('/:id', getEduById);
-
 
 module.exports = router;

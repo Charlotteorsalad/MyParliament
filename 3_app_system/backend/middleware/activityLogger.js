@@ -3,11 +3,12 @@ const ActivityLog = require('../models/ActivityLog');
 // Activity logging middleware
 const logActivity = (action, description, options = {}) => {
   return async (req, res, next) => {
-    // Only log if user is authenticated
-    if (req.user && req.user._id) {
+    // Only log if user is authenticated (auth may set req.user.id or req.user._id)
+    const userId = req.user && (req.user._id || req.user.id);
+    if (userId) {
       try {
         const activity = new ActivityLog({
-          userId: req.user._id,
+          userId,
           action,
           description,
           details: options.details || '',

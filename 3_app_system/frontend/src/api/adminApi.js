@@ -48,17 +48,20 @@ export const adminApi = {
   
   // Admin management (superadmin only)
   getAllAdmins: () => 
-    adminApiInstance.get('/admin/admins'),
+    adminApiInstance.get('/admin-auth/admins'),
   
   createAdmin: (adminData) => 
-    adminApiInstance.post('/admin/admins', adminData),
+    adminApiInstance.post('/admin/users', adminData),
   
   updateAdmin: (adminId, adminData) => 
-    adminApiInstance.put(`/admin/admins/${adminId}`, adminData),
+    adminApiInstance.put(`/admin/users/${adminId}`, adminData),
   
   deleteAdmin: (adminId) => 
-    adminApiInstance.delete(`/admin/admins/${adminId}`),
+    adminApiInstance.delete(`/admin/users/${adminId}`),
   
+  getAdminActivity: (adminId, limit = 50) =>
+    adminApiInstance.get(`/admin/users/${adminId}/activity`, { params: { limit } }),
+
   // Statistics
   getUserStats: () => 
     adminApiInstance.get('/admin/stats/users'),
@@ -101,7 +104,13 @@ export const adminApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
   },
-  
+
+  /** Post FormData that already contains 'file' and optionally 'attachmentType' (content | quiz). */
+  uploadEduContentAttachment: (id, formData) =>
+    adminApiInstance.post(`/admin/edu/content/${id}/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }),
+
   removeAttachment: (id, attachmentId) => 
     adminApiInstance.delete(`/admin/edu/content/${id}/attachments/${attachmentId}`),
   
@@ -123,23 +132,46 @@ export const adminApi = {
   
   assignQuiz: (contentId, quizId) => 
     adminApiInstance.post(`/admin/edu/content/${contentId}/assign-quiz`, { quizId }),
+  
+  uploadImage: (id, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return adminApiInstance.post(`/admin/edu/content/${id}/upload-image`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+  
+  migrateImages: () => 
+    adminApiInstance.post('/admin/edu/migrate-images'),
 
   // User Monitoring
   searchUsers: (searchTerm) => 
     adminApiInstance.get(`/admin/monitoring/users/search?q=${encodeURIComponent(searchTerm)}`),
   
+  getUserDetails: (userId) => 
+    adminApiInstance.get(`/admin/monitoring/users/${userId}`),
+  
   getUserActivities: (userId, page = 1, limit = 10) => 
     adminApiInstance.get(`/admin/monitoring/users/${userId}/activities?page=${page}&limit=${limit}`),
   
-  restrictUser: (userId, days) => 
-    adminApiInstance.post(`/admin/monitoring/users/${userId}/restrict`, { days }),
+  restrictUser: (userId, payload) =>
+    adminApiInstance.post(`/admin/monitoring/users/${userId}/restrict`, typeof payload === 'object' ? payload : { days: payload }),
   
   unrestrictUser: (userId) => 
     adminApiInstance.post(`/admin/monitoring/users/${userId}/unrestrict`),
 
+  suspendUser: (userId) =>
+    adminApiInstance.post(`/admin/monitoring/users/${userId}/suspend`),
+
+  unsuspendUser: (userId) =>
+    adminApiInstance.post(`/admin/monitoring/users/${userId}/unsuspend`),
+
   // Feedback Management
   getAllFeedback: (params = {}) => 
     adminApiInstance.get('/admin/feedback', { params }),
+
+  getFeedbackStats: (range = '30days') =>
+    adminApiInstance.get('/admin/feedback/stats', { params: { range } }),
   
   getFeedbackById: (id) => 
     adminApiInstance.get(`/admin/feedback/${id}`),
@@ -149,15 +181,15 @@ export const adminApi = {
   
   updateFeedbackPriority: (id, priority) => 
     adminApiInstance.patch(`/admin/feedback/${id}/priority`, { priority }),
+
+  assignFeedback: (id, assignedTo) =>
+    adminApiInstance.patch(`/admin/feedback/${id}/assign`, { assignedTo: assignedTo || null }),
   
   respondToFeedback: (id, response) => 
     adminApiInstance.post(`/admin/feedback/${id}/respond`, { response }),
   
   deleteFeedback: (id) => 
     adminApiInstance.delete(`/admin/feedback/${id}`),
-  
-  getFeedbackStats: () => 
-    adminApiInstance.get('/admin/feedback/stats'),
   
   bulkUpdateFeedbackStatus: (feedbackIds, status) => 
     adminApiInstance.patch('/admin/feedback/bulk/status', { feedbackIds, status }),
@@ -226,9 +258,15 @@ export const adminApi = {
   getCronJobAnalytics: () => 
     adminApiInstance.get('/admin/analytics/cron-jobs'),
 
-  getComprehensiveAnalytics: () => 
-    adminApiInstance.get('/admin/analytics/comprehensive'),
+  getTopicNetworkData: () => 
+    adminApiInstance.get('/admin/analytics/topic-network'),
+
+  getComprehensiveAnalytics: (range = '30d') => 
+    adminApiInstance.get(`/admin/analytics/comprehensive?range=${range}`, { timeout: 30000 }),
   
+  getArimaForecast: (pipeline = 'pipeline5', topN = 10) =>
+    adminApiInstance.get(`/admin/analytics/arima-forecast?pipeline=${pipeline}&topN=${topN}`, { timeout: 30000 }),
+
   // DevOps data management
   createSampleDevOpsData: () => 
     adminApiInstance.post('/admin/devops/create-sample-data'),
@@ -262,8 +300,8 @@ export const adminApi = {
   addWorkNote: (incidentId, noteData) => 
     adminApiInstance.post(`/admin/technical-support/incidents/${incidentId}/notes`, noteData),
 
-  getIncidentStats: () => 
-    adminApiInstance.get('/admin/technical-support/incidents/stats'),
+  getIncidentStats: (range = '30d') => 
+    adminApiInstance.get(`/admin/technical-support/incidents/stats?range=${range}`),
 
   // Change Request Management
   getAllChangeRequests: (params = {}) => {
@@ -288,8 +326,8 @@ export const adminApi = {
   updateChangeRequestApproval: (changeRequestId, approvalData) => 
     adminApiInstance.patch(`/admin/technical-support/change-requests/${changeRequestId}/approval`, approvalData),
 
-  getChangeRequestStats: () => 
-    adminApiInstance.get('/admin/technical-support/change-requests/stats'),
+  getChangeRequestStats: (range = '30d') => 
+    adminApiInstance.get(`/admin/technical-support/change-requests/stats?range=${range}`),
 
   // Maintenance Scheduler Management
   getAllMaintenanceTasks: (params = {}) => {
@@ -317,8 +355,8 @@ export const adminApi = {
   addMaintenanceWorkNote: (id, noteData) => 
     adminApiInstance.post(`/admin/technical-support/maintenance-tasks/${id}/notes`, noteData),
 
-  getMaintenanceTaskStats: () => 
-    adminApiInstance.get('/admin/technical-support/maintenance-tasks/stats'),
+  getMaintenanceTaskStats: (range = '30d') => 
+    adminApiInstance.get(`/admin/technical-support/maintenance-tasks/stats?range=${range}`),
 
   getMaintenanceTasksCalendar: (startDate, endDate) => {
     const params = new URLSearchParams();
@@ -329,5 +367,19 @@ export const adminApi = {
 
   // Admin Users for Assignment
   getAdminUsers: () => 
-    adminApiInstance.get('/admin/technical-support/admin-users')
+    adminApiInstance.get('/admin/technical-support/admin-users'),
+
+  // Surveys
+  getAllSurveys: (params = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') qs.append(k, v); });
+    return adminApiInstance.get(`/admin/surveys?${qs.toString()}`);
+  },
+  getSurveyById: (id) => adminApiInstance.get(`/admin/surveys/${id}`),
+  createSurvey: (data) => adminApiInstance.post('/admin/surveys', data),
+  updateSurvey: (id, data) => adminApiInstance.put(`/admin/surveys/${id}`, data),
+  updateSurveyStatus: (id, status) => adminApiInstance.patch(`/admin/surveys/${id}/status`, { status }),
+  deleteSurvey: (id) => adminApiInstance.delete(`/admin/surveys/${id}`),
+  getSurveyStats: (id, range = '') => adminApiInstance.get(`/admin/surveys/${id}/stats`, { params: range ? { range } : {} }),
+  getSurveyReportSummary: (range = '30days') => adminApiInstance.get('/admin/surveys/summary', { params: { range } })
 };

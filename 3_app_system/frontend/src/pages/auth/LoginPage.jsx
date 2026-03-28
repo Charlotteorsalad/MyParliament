@@ -78,13 +78,6 @@ function LoginPage() {
     e.preventDefault();
     clearError();
     
-    console.log('Attempting user login...');
-    console.log('Current auth state before login:', {
-      adminToken: !!localStorage.getItem('adminToken'),
-      userToken: !!localStorage.getItem('token'),
-      sessionToken: !!sessionStorage.getItem('token')
-    });
-    
     // Mark all fields as touched so validation errors will show
     setFieldTouched({ email: true, password: true });
     
@@ -93,17 +86,9 @@ function LoginPage() {
     }
 
     try {
-      const result = await login({ email, password, remember });
+      await login({ email, password, remember });
       setSuccessMsg("Login successful!");
-      console.log('Login result:', result);
-      console.log('Auth state after login:', {
-        adminToken: !!localStorage.getItem('adminToken'),
-        userToken: !!localStorage.getItem('token'),
-        sessionToken: !!sessionStorage.getItem('token')
-      });
-      // Wait a bit longer to ensure state is updated
       setTimeout(() => {
-        console.log('Navigating to profile...');
         navigate("/profile");
       }, 1000);
     } catch (err) {
@@ -123,19 +108,19 @@ function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen flex flex-col bg-slate-50 min-w-0 max-w-full overflow-x-hidden">
       {/* Header - simple brand only */}
-      <div className="w-full bg-white shadow-md border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] flex items-center justify-center mr-3">
+      <div className="w-full bg-white shadow-md border-b border-gray-100 min-w-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center min-w-0 flex-shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] flex items-center justify-center mr-3 flex-shrink-0">
               <svg className="w-6 h-6 text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" clipRule="evenodd" />
               </svg>
             </div>
-            <span className="text-xl font-bold text-gray-800">My Parliament</span>
+            <span className="text-xl font-bold text-gray-800 truncate">My Parliament</span>
           </div>
-          <Link to="/" className="text-sm font-medium text-gray-700 hover:text-gray-900">Back to Home</Link>
+          <Link to="/" className="text-sm font-medium text-gray-700 hover:text-gray-900 flex-shrink-0">Back to Home</Link>
         </div>
       </div>
 
@@ -148,20 +133,20 @@ function LoginPage() {
         </div>
 
         {/* Split layout with consistent dimensions */}
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <div className="relative w-full overflow-hidden rounded-2xl shadow-2xl">
-            <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[620px]">
+        <div className="relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-10 w-full min-w-0">
+          <div className="relative w-full min-w-0 overflow-hidden rounded-2xl shadow-2xl">
+            <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[520px] sm:min-h-[580px] lg:min-h-[620px]">
               {/* Left: Login Card */}
-              <div className="relative bg-white/90 backdrop-blur p-8 flex items-center">
-                <div className="w-full max-w-md mx-auto">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-1">Welcome back</h2>
-                  <p className="text-gray-600 mb-6">Sign in to continue</p>
+              <div className="relative bg-white/90 backdrop-blur p-4 sm:p-6 lg:p-8 flex items-center min-w-0">
+                <div className="w-full max-w-md mx-auto min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 break-words">Welcome back</h2>
+                  <p className="text-gray-600 mb-6 text-sm sm:text-base break-words">Sign in to continue</p>
 
                   {error && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">{error}</div>
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm break-words">{error}</div>
                   )}
                   {successMsg && (
-                    <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md">{successMsg}</div>
+                    <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm break-words">{successMsg}</div>
                   )}
 
                   <form onSubmit={handleLogin} className="space-y-4" noValidate>
@@ -220,8 +205,8 @@ function LoginPage() {
                       {validationErrors.password && fieldTouched.password && (
                         <p className="mt-1 text-sm text-red-600">{validationErrors.password}</p>
                       )}
-                      <div className="mt-3 flex items-center justify-between">
-                        <label className="inline-flex items-center text-sm text-gray-700">
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <label className="inline-flex items-center text-sm text-gray-700 min-w-0">
                           <input
                             type="checkbox"
                             className="h-4 w-4 text-[#C3C3E5] border-gray-300 rounded focus:ring-[#C3C3E5]"
@@ -246,15 +231,22 @@ function LoginPage() {
                     >
                       {loading ? "Logging in..." : "Sign In"}
                     </button>
+                    {/* Narrow: switch to sign up (right panel hidden) */}
+                    <p className="lg:hidden mt-4 text-center text-sm text-gray-600">
+                      Don&apos;t have an account?{" "}
+                      <Link to="/register" className="font-medium text-[#A8A8D8] hover:text-[#8B8BC9] underline">
+                        Sign up
+                      </Link>
+                    </p>
                   </form>
                 </div>
               </div>
 
               {/* Right: CTA panel to register */}
-              <div className="relative hidden lg:block">
+              <div className="relative hidden lg:block min-w-0">
                 <div className="absolute inset-0 bg-black/30"></div>
-                <div className="relative h-full flex items-center justify-center p-8">
-                  <div className="text-center text-white max-w-sm">
+                <div className="relative h-full flex items-center justify-center p-6 lg:p-8 min-w-0">
+                  <div className="text-center text-white max-w-sm min-w-0 px-2">
                     <h3 className="text-2xl font-semibold mb-2">New here?</h3>
                     <p className="text-white/85 mb-6">Create your account and join My Parliament.</p>
                     <button
@@ -273,8 +265,8 @@ function LoginPage() {
 
             {/* Full-screen slide overlay (covers entire container) */}
             <div className={`absolute inset-0 bg-white/95 backdrop-blur transform transition-transform duration-600 ease-out ${showSignUpSlide ? "translate-x-0" : "translate-x-full"}`} aria-hidden={!showSignUpSlide}>
-              <div className="h-full flex items-center justify-center p-8">
-                <div className="text-center">
+              <div className="h-full flex items-center justify-center p-4 sm:p-8 min-w-0">
+                <div className="text-center min-w-0 max-w-full px-2">
                   <div className="mx-auto w-16 h-16 rounded-full bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] mb-6 flex items-center justify-center">
                     <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c.943 0 1.714-.771 1.714-1.714S12.943 7.571 12 7.571 10.286 8.343 10.286 9.286 11.057 11 12 11z" />

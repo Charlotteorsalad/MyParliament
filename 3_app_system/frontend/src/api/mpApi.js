@@ -25,6 +25,12 @@ export const mpApi = {
     return response.data;
   },
 
+  // Get MP details by name (for timeline speakers when mp_id not resolved)
+  getDetailByName: async (name) => {
+    const response = await api.get('/mps/by-name', { params: { name } });
+    return response.data;
+  },
+
   // Search MPs by query
   search: async (query, filters = {}) => {
     const params = { q: query, ...filters };

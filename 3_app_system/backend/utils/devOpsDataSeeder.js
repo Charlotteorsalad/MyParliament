@@ -48,7 +48,7 @@ const seedDevOpsData = async () => {
     }
 
     await PipelineExecution.insertMany(pipelineExecutions);
-    console.log(`✅ Created ${pipelineExecutions.length} pipeline executions`);
+    console.log(`Created ${pipelineExecutions.length} pipeline executions`);
 
     // Seed Model Training Jobs (last 60 days)
     const trainingJobs = [];
@@ -93,7 +93,7 @@ const seedDevOpsData = async () => {
     }
 
     await ModelTrainingJob.insertMany(trainingJobs);
-    console.log(`✅ Created ${trainingJobs.length} model training jobs`);
+    console.log(`Created ${trainingJobs.length} model training jobs`);
 
     // Seed Scheduled Job Executions (last 30 days)
     const jobExecutions = [];
@@ -133,7 +133,7 @@ const seedDevOpsData = async () => {
     }
 
     await ScheduledJobExecution.insertMany(jobExecutions);
-    console.log(`✅ Created ${jobExecutions.length} scheduled job executions`);
+    console.log(`Created ${jobExecutions.length} scheduled job executions`);
 
     // Seed System Alerts (last 7 days)
     const alerts = [];
@@ -166,12 +166,12 @@ const seedDevOpsData = async () => {
     }
 
     await SystemAlert.insertMany(alerts);
-    console.log(`✅ Created ${alerts.length} system alerts`);
+    console.log(`Created ${alerts.length} system alerts`);
 
-    console.log('🎉 DevOps data seeding completed successfully!');
+    console.log('DevOps data seeding completed successfully!');
     return true;
   } catch (error) {
-    console.error('❌ Error seeding DevOps data:', error);
+    console.error('Error seeding DevOps data:', error);
     throw error;
   }
 };

@@ -34,7 +34,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 
 # Import rule-based topic generation utilities
-from utils_topic_generation import batch_generate_topic_names
+from utils_topic_generation import batch_generate_topic_names, set_mp_name_tokens
 
 # Load environment
 project_root = Path(__file__).resolve().parents[2]
@@ -46,6 +46,43 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not found in environment")
 
 
+def _load_mp_name_tokens() -> set:
+    """
+    Query the Mp collection and return a set of lowercase single-word name tokens
+    (len >= 4, non-numeric) extracted from name, full_name_with_titles, and
+    original_name_variations fields.  Used to filter politician names from topic
+    keywords at generation time.
+    """
+    import re as _re
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client["MyParliament"]
+        mps = list(db["MP"].find(
+            {},
+            {"name": 1, "full_name_with_titles": 1, "original_name_variations": 1, "_id": 0}
+        ))
+        client.close()
+
+        tokens = set()
+        def add_tokens(s):
+            if not s:
+                return
+            for w in _re.split(r"[\s,.'()\-]+", s.lower()):
+                clean = _re.sub(r"[^\w]", "", w)
+                if len(clean) >= 4 and not clean.isdigit():
+                    tokens.add(clean)
+
+        for mp in mps:
+            add_tokens(mp.get("name", ""))
+            add_tokens(mp.get("full_name_with_titles", ""))
+            for v in (mp.get("original_name_variations") or []):
+                add_tokens(v)
+
+        print(f"INFO: Loaded {len(tokens)} MP name tokens for keyword filtering")
+        return tokens
+    except Exception as exc:
+        print(f"WARNING: Could not load MP name tokens: {exc}")
+        return set()
 
 
 def process_pipeline(pipeline_id: str, force: bool = False) -> bool:
@@ -192,7 +229,11 @@ Customization:
     args = parser.parse_args()
     
     print("Using rule-based method (fast, no external dependencies)")
-    
+
+    # Load MP names once and inject into the keyword filter
+    mp_tokens = _load_mp_name_tokens()
+    set_mp_name_tokens(mp_tokens)
+
     # Determine which pipelines to process
     if args.pipeline:
         pipelines = [args.pipeline]

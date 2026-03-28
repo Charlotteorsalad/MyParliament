@@ -2,16 +2,73 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAdminAuth } from '../../hooks/useAdminAuth.jsx';
 import { adminApi } from '../../api';
 
+// Default permissions by role (shown in Details when user has no explicit permissions)
+const ALL_PERMISSIONS = [
+  { key: 'manage_users',   label: 'Manage Users',              desc: 'User List, User Monitor, User Feedback' },
+  { key: 'manage_content', label: 'Manage Content',            desc: 'Educational Content & Quizzes' },
+  { key: 'manage_mps',     label: 'Manage MPs',                desc: 'MP Management' },
+  { key: 'view_analytics', label: 'View Analytics',            desc: 'Analytics & Reports' },
+  { key: 'moderate_forum', label: 'Manage Forum',              desc: 'Forum Moderation (topics, posts, restrictions)' },
+  { key: 'manage_support', label: 'Manage Technical Support',  desc: 'Technical Support (incidents, change requests, maintenance)' },
+];
+
+const ROLE_DEFAULT_PERMISSIONS = {
+  admin: [
+    'manage_users',
+    'manage_content',
+    'manage_mps',
+    'view_analytics',
+    'moderate_forum',
+    'manage_support',
+  ],
+  superadmin: [
+    'manage_users',
+    'manage_content',
+    'manage_mps',
+    'view_analytics',
+    'moderate_forum',
+    'manage_support',
+  ]
+};
+
+const DEFAULT_ADMIN_PASSWORD = 'Admin@12345';
+
+/** Strip "IC" and "permissions" from activity log description for display. */
+function formatActivityDescription(desc) {
+  if (!desc || typeof desc !== 'string') return desc;
+  return desc
+    .replace(/,?\s*IC\s*,?/gi, '')
+    .replace(/,?\s*permissions\s*,?/gi, '')
+    .replace(/\s*,\s*,/g, ',')
+    .replace(/\(\s*,/g, '(')
+    .replace(/,\s*\)/g, ')')
+    .replace(/\s*\(\s*\)/g, '')
+    .trim();
+}
+
+/** Convert snake_case action key to a readable label. */
+function formatActionLabel(action) {
+  if (!action) return 'Admin Action';
+  return action
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 const AdminUserManagement = () => {
   const { admin } = useAdminAuth();
+  const currentAdminId = admin && (admin.id || admin._id);
+  const isCurrentAdmin = (user) => user && currentAdminId && String(user._id) === String(currentAdminId);
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [sortBy, setSortBy] = useState('name-asc');
+  const [sortBy, setSortBy] = useState('');
   const [isApplyingFilter, setIsApplyingFilter] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -24,6 +81,10 @@ const AdminUserManagement = () => {
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [alertType, setAlertType] = useState('error'); // 'error', 'success', 'warning'
+  const [goToPageInput, setGoToPageInput] = useState('');
+  const [logExpanded, setLogExpanded] = useState(false);
+  const [adminActivity, setAdminActivity] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
 
   // Helper function to show alerts
   const showAlertMessage = (message, type = 'error') => {
@@ -36,12 +97,77 @@ const AdminUserManagement = () => {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
-    password: '',
+    password: DEFAULT_ADMIN_PASSWORD,
     role: '',
     status: '',
     icNumber: '',
     permissions: []
   });
+  const [formErrors, setFormErrors] = useState({});
+  const [shakeForm, setShakeForm] = useState(false);
+
+  // --- Validation helpers ---
+  // Malaysian IC: 12 digits, optional hyphens as YYMMDD-PB-#### (e.g. 900101-01-1234 or 900101011234)
+  const isValidMalaysianIC = (value) => {
+    if (!value || typeof value !== 'string') return false;
+    const stripped = value.replace(/\s/g, '').replace(/-/g, '');
+    return /^\d{12}$/.test(stripped);
+  };
+
+  // Email must have @ and a proper domain (at least one dot after @, e.g. user@domain.com)
+  const isValidEmail = (value) => {
+    if (!value || typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    const atIndex = trimmed.indexOf('@');
+    if (atIndex <= 0) return false;
+    const domain = trimmed.slice(atIndex + 1);
+    if (!domain || !domain.includes('.') || domain.startsWith('.') || domain.endsWith('.')) return false;
+    const tld = domain.split('.').pop();
+    return tld.length >= 2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  };
+
+  // Username: 3–50 chars, alphanumeric and underscore only
+  const isValidUsername = (value) => {
+    if (!value || typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    return trimmed.length >= 3 && trimmed.length <= 50 && /^[a-zA-Z0-9_]+$/.test(trimmed);
+  };
+
+  // Password: min 8 chars, at least one letter and one number
+  const isValidPassword = (value, required = true) => {
+    if (!value || typeof value !== 'string') return !required;
+    const p = value;
+    return p.length >= 8 && /\d/.test(p) && /[a-zA-Z]/.test(p);
+  };
+
+  const validateCreateForm = () => {
+    const err = {};
+    if (!formData.username?.trim()) err.username = 'Username is required.';
+    else if (!isValidUsername(formData.username)) err.username = 'Username must be 3–50 characters and only letters, numbers, and underscores.';
+    if (!formData.email?.trim()) err.email = 'Email is required.';
+    else if (!isValidEmail(formData.email)) err.email = 'Please enter a valid email with a domain (e.g. name@domain.com).';
+    if (!formData.password?.trim()) err.password = 'Password is required.';
+    else if (!isValidPassword(formData.password, true)) err.password = 'Password must be at least 8 characters with at least one letter and one number.';
+    if (!formData.icNumber?.trim()) err.icNumber = 'IC number is required.';
+    else if (!isValidMalaysianIC(formData.icNumber)) err.icNumber = 'Please enter a valid Malaysian IC number (12 digits, e.g. 900101-01-1234).';
+    if (!formData.role) err.role = 'Please select a role.';
+    setFormErrors(err);
+    return { valid: Object.keys(err).length === 0, errors: err };
+  };
+
+  const validateEditForm = () => {
+    const err = {};
+    if (!formData.username?.trim()) err.username = 'Username is required.';
+    else if (!isValidUsername(formData.username)) err.username = 'Username must be 3–50 characters and only letters, numbers, and underscores.';
+    if (!formData.email?.trim()) err.email = 'Email is required.';
+    else if (!isValidEmail(formData.email)) err.email = 'Please enter a valid email with a domain (e.g. name@domain.com).';
+    if (!formData.icNumber?.trim()) err.icNumber = 'IC number is required.';
+    else if (!isValidMalaysianIC(formData.icNumber)) err.icNumber = 'Please enter a valid Malaysian IC number (12 digits, e.g. 900101-01-1234).';
+    if (!formData.role) err.role = 'Please select a role.';
+    if (!formData.status) err.status = 'Please select a status.';
+    setFormErrors(err);
+    return { valid: Object.keys(err).length === 0, errors: err };
+  };
 
   // Check if current admin is superadmin
   const isSuperAdmin = admin?.role === 'superadmin';
@@ -57,9 +183,21 @@ const AdminUserManagement = () => {
     }
   }, [isSuperAdmin, currentPage, searchTerm, filterRole, filterStatus, sortBy]);
 
+  const getInitialCreateFormData = () => ({
+    username: '',
+    email: '',
+    password: DEFAULT_ADMIN_PASSWORD,
+    role: '',
+    status: 'active',
+    icNumber: '',
+    permissions: []
+  });
+
   // Listen for create admin event from parent dashboard
   useEffect(() => {
     const handleCreateAdmin = () => {
+      setFormErrors({});
+      setFormData(getInitialCreateFormData());
       setShowCreateModal(true);
     };
 
@@ -75,14 +213,27 @@ const AdminUserManagement = () => {
       setIsApplyingFilter(true);
       
       // Convert sortBy to server format
-      let serverSortBy = 'createdAt';
-      let serverSortOrder = 'desc';
+      // Default to name ascending when sortBy is empty (but show inactive icon)
+      let serverSortBy = 'name';
+      let serverSortOrder = 'asc';
       
       if (sortBy === 'name-asc') {
         serverSortBy = 'name';
         serverSortOrder = 'asc';
       } else if (sortBy === 'name-desc') {
         serverSortBy = 'name';
+        serverSortOrder = 'desc';
+      } else if (sortBy === 'role-asc') {
+        serverSortBy = 'role';
+        serverSortOrder = 'asc';
+      } else if (sortBy === 'role-desc') {
+        serverSortBy = 'role';
+        serverSortOrder = 'desc';
+      } else if (sortBy === 'status-asc') {
+        serverSortBy = 'status';
+        serverSortOrder = 'asc';
+      } else if (sortBy === 'status-desc') {
+        serverSortBy = 'status';
         serverSortOrder = 'desc';
       } else if (sortBy === 'activity-asc') {
         serverSortBy = 'activity';
@@ -92,11 +243,10 @@ const AdminUserManagement = () => {
         serverSortOrder = 'desc';
       }
       
-      console.log('AdminUserManagement API call:', { currentPage, serverSortBy, serverSortOrder, searchTerm, filterRole, filterStatus });
       const response = await adminApi.getAllAdminUsers(currentPage, 10, serverSortBy, serverSortOrder, searchTerm, filterRole, filterStatus);
-      console.log('AdminUserManagement API response:', response.data);
       setUsers(response.data.users);
       setTotalPages(response.data.pagination.pages);
+      setTotalCount(response.data.pagination.total ?? 0);
     } catch (error) {
       console.error('Error fetching admin users:', error);
     } finally {
@@ -107,19 +257,20 @@ const AdminUserManagement = () => {
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
+    const { valid } = validateCreateForm();
+    if (!valid) {
+      setShakeForm(true);
+      setTimeout(() => setShakeForm(false), 500);
+      return;
+    }
     try {
       setLoading(true);
-      await adminApi.createAdmin(formData);
-      setShowCreateModal(false);
-      setFormData({
-        username: '',
-        email: '',
-        password: '',
-        role: '',
-        status: '',
-        icNumber: '',
-        permissions: []
-      });
+      const payload = { ...formData };
+      if (!payload.permissions || payload.permissions.length === 0) {
+        payload.permissions = ROLE_DEFAULT_PERMISSIONS[payload.role] || [];
+      }
+      await adminApi.createAdmin(payload);
+      closeCreateModal();
       fetchUsers();
     } catch (error) {
       console.error('Error creating admin:', error);
@@ -131,11 +282,18 @@ const AdminUserManagement = () => {
 
   const handleUpdateUser = async (e) => {
     e.preventDefault();
+    const { valid } = validateEditForm();
+    if (!valid) {
+      setShakeForm(true);
+      setTimeout(() => setShakeForm(false), 500);
+      return;
+    }
     try {
       setLoading(true);
       await adminApi.updateAdmin(selectedUser._id, formData);
       setShowEditModal(false);
       setSelectedUser(null);
+      setFormErrors({});
       fetchUsers();
     } catch (error) {
       console.error('Error updating admin:', error);
@@ -183,9 +341,18 @@ const AdminUserManagement = () => {
   const handleBulkAction = async () => {
     if (!bulkAction || selectedUsers.length === 0) return;
 
+    let idsToUpdate = selectedUsers;
+    if (bulkAction === 'suspend' && currentAdminId) {
+      idsToUpdate = selectedUsers.filter((id) => String(id) !== String(currentAdminId));
+      if (idsToUpdate.length === 0) {
+        showAlertMessage('Cannot suspend your own account. Remove yourself from the selection.', 'error');
+        return;
+      }
+    }
+
     try {
       setLoading(true);
-      await adminApi.bulkUpdateUsers(selectedUsers, { action: bulkAction });
+      await adminApi.bulkUpdateUsers(idsToUpdate, { action: bulkAction });
       setSelectedUsers([]);
       setBulkAction('');
       fetchUsers();
@@ -213,8 +380,15 @@ const AdminUserManagement = () => {
     }
   };
 
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setFormData(getInitialCreateFormData());
+    setFormErrors({});
+  };
+
   const openEditModal = (user) => {
     setSelectedUser(user);
+    setFormErrors({});
     setFormData({
       username: user.username || '',
       email: user.email || '',
@@ -229,6 +403,8 @@ const AdminUserManagement = () => {
 
   const openDetailModal = (user) => {
     setSelectedUser(user);
+    setLogExpanded(false);
+    setAdminActivity([]);
     setShowDetailModal(true);
   };
 
@@ -280,10 +456,10 @@ const AdminUserManagement = () => {
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full min-w-0 max-w-full overflow-x-hidden">
       {/* Filters and Search - First Row */}
-      <div className="bg-white/80 rounded-xl p-6 shadow-lg border border-green-200 mb-6 mt-0">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="bg-white/80 rounded-xl p-4 sm:p-6 shadow-lg border border-green-200 mb-6 mt-0 min-w-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
               <div className="relative">
@@ -340,12 +516,12 @@ const AdminUserManagement = () => {
 
         {/* Bulk Actions */}
         {selectedUsers.length > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-yellow-800">
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 min-w-0">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <span className="text-sm text-green-800">
                 {selectedUsers.length} user(s) selected
               </span>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={bulkAction}
                   onChange={(e) => setBulkAction(e.target.value)}
@@ -360,7 +536,7 @@ const AdminUserManagement = () => {
                 <button
                   onClick={handleBulkAction}
                   disabled={!bulkAction}
-                  className="px-4 py-1 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 disabled:opacity-50 text-sm"
+                  className="px-4 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm"
                 >
                   Apply
                 </button>
@@ -375,10 +551,10 @@ const AdminUserManagement = () => {
           </div>
         )}
 
-        {/* Users Table */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 transition-all duration-200 table-fixed">
+        {/* Users Table - table full width, scroll container when narrow */}
+        <div className="bg-white rounded-lg shadow min-w-0">
+          <div className="overflow-x-auto min-w-0 w-full">
+            <table className="w-full min-w-[900px] divide-y divide-gray-200 transition-all duration-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left w-12">
@@ -398,8 +574,24 @@ const AdminUserManagement = () => {
                       {getSortIcon('name')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">Role</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">Status</th>
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none w-1/6"
+                    onClick={() => handleSort('role')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Role</span>
+                      {getSortIcon('role')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none w-1/6"
+                    onClick={() => handleSort('status')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Status</span>
+                      {getSortIcon('status')}
+                    </div>
+                  </th>
                   <th 
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none w-1/4"
                     onClick={() => handleSort('activity')}
@@ -409,7 +601,7 @@ const AdminUserManagement = () => {
                       {getSortIcon('activity')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">Actions</th>
+                  <th className="px-2 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{ minWidth: '7rem' }}>Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200" style={{ minHeight: '400px' }}>
@@ -480,23 +672,25 @@ const AdminUserManagement = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 w-1/4">
                         {user.lastLogin ? new Date(user.lastLogin).toLocaleString() : 'Never'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium w-1/6">
-                        <div className="flex space-x-2">
+                      <td className="px-2 sm:px-4 py-2 text-sm font-medium whitespace-nowrap align-top" style={{ minWidth: '7rem' }}>
+                        <div className="flex flex-col items-start gap-0">
                           <button
                             onClick={() => openDetailModal(user)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="text-xs text-blue-600 hover:text-blue-900 py-0.5 block text-left"
                           >
                             Details
                           </button>
                           <button
                             onClick={() => openEditModal(user)}
-                            className="text-indigo-600 hover:text-indigo-900"
+                            className="text-xs text-indigo-600 hover:text-indigo-900 py-0.5 block text-left"
                           >
                             Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteUser(user)}
-                            className="text-red-600 hover:text-red-900"
+                            onClick={() => !isCurrentAdmin(user) && handleDeleteUser(user)}
+                            disabled={isCurrentAdmin(user)}
+                            className={`text-xs py-0.5 block text-left ${isCurrentAdmin(user) ? 'text-gray-400 cursor-not-allowed' : 'text-red-600 hover:text-red-900'}`}
+                            title={isCurrentAdmin(user) ? 'Cannot delete your own account' : undefined}
                           >
                             Delete
                           </button>
@@ -510,12 +704,16 @@ const AdminUserManagement = () => {
           </div>
 
           {/* Pagination */}
-          <div className="px-6 py-4 border-t border-gray-200">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-700">
-                Showing page {currentPage} of {totalPages} (Total items: {users.length})
+          <div className="px-4 sm:px-6 py-4 border-t border-gray-200 min-w-0">
+            <div className="flex flex-row items-center justify-between gap-3 flex-nowrap min-w-0">
+              <div className="text-sm text-gray-700 flex items-center gap-2 flex-shrink-0">
+                <span>Items:</span>
+                <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{users.length}</span>
+                <span>/</span>
+                <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{totalCount}</span>
+                <span className="ml-1 whitespace-nowrap">— Page {currentPage} of {totalPages}</span>
               </div>
-              <nav className="flex space-x-2">
+              <nav className="flex items-center gap-2 flex-nowrap flex-shrink-0">
                 <button
                   onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                   disabled={currentPage === 1}
@@ -523,71 +721,20 @@ const AdminUserManagement = () => {
                 >
                   Previous
                 </button>
-                {(() => {
-                  const maxVisiblePages = 5;
-                  const startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-                  const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-                  const pages = [];
-                  
-                  // Add first page and ellipsis if needed
-                  if (startPage > 1) {
-                    pages.push(
-                      <button
-                        key={1}
-                        onClick={() => setCurrentPage(1)}
-                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                      >
-                        1
-                      </button>
-                    );
-                    if (startPage > 2) {
-                      pages.push(
-                        <span key="ellipsis1" className="px-3 py-2 text-sm text-gray-500">
-                          ...
-                        </span>
-                      );
-                    }
-                  }
-                  
-                  // Add visible page numbers
-                  for (let i = startPage; i <= endPage; i++) {
-                    pages.push(
-                      <button
-                        key={i}
-                        onClick={() => setCurrentPage(i)}
-                        className={`px-3 py-2 text-sm font-medium border rounded-md ${
-                          i === currentPage
-                            ? 'bg-green-600 text-white border-green-600'
-                            : 'text-gray-500 bg-white border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {i}
-                      </button>
-                    );
-                  }
-                  
-                  // Add ellipsis and last page if needed
-                  if (endPage < totalPages) {
-                    if (endPage < totalPages - 1) {
-                      pages.push(
-                        <span key="ellipsis2" className="px-3 py-2 text-sm text-gray-500">
-                          ...
-                        </span>
-                      );
-                    }
-                    pages.push(
-                      <button
-                        key={totalPages}
-                        onClick={() => setCurrentPage(totalPages)}
-                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                      >
-                        {totalPages}
-                      </button>
-                    );
-                  }
-                  
-                  return pages;
-                })()}
+                {totalPages > 1 && (
+                  <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(goToPageInput, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { setCurrentPage(n); setGoToPageInput(''); } }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={goToPageInput}
+                      onChange={(e) => setGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                      className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center"
+                      placeholder={currentPage}
+                      aria-label="Page number"
+                    />
+                  </form>
+                )}
                 <button
                   onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                   disabled={currentPage === totalPages}
@@ -603,13 +750,13 @@ const AdminUserManagement = () => {
       {/* Create Admin Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-0 border w-[672px] max-w-[95vw] shadow-xl rounded-lg bg-white">
-            {/* Header */}
-            <div className="bg-green-600 px-6 py-4 rounded-t-lg">
+          <div className="relative p-0 border w-full max-w-[672px] shadow-xl rounded-lg bg-white max-h-[90vh] flex flex-col overflow-hidden min-w-0">
+            {/* Header - Fixed */}
+            <div className="bg-green-600 px-6 py-4 rounded-t-lg flex-shrink-0">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-white">Create New Admin</h3>
                 <button
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={closeCreateModal}
                   className="text-white hover:text-gray-200 transition-colors"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -619,8 +766,8 @@ const AdminUserManagement = () => {
               </div>
             </div>
 
-            {/* Form */}
-            <form onSubmit={handleCreateUser} className="p-6 space-y-6">
+            {/* Form - Scrollable */}
+            <form onSubmit={handleCreateUser} className={`p-6 space-y-6 overflow-y-auto flex-1 ${shakeForm ? 'form-shake' : ''}`}>
               <div className="grid grid-cols-1 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -629,11 +776,11 @@ const AdminUserManagement = () => {
                   <input
                     type="text"
                     value={formData.username}
-                    onChange={(e) => setFormData({...formData, username: e.target.value})}
-                    placeholder="Enter username"
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                    onChange={(e) => { setFormData({...formData, username: e.target.value}); setFormErrors((prev) => ({ ...prev, username: '' })); }}
+                    placeholder="Enter username (3–50 chars, letters, numbers, underscore)"
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all ${formErrors.username ? 'border-red-500' : 'border-gray-300'}`}
                   />
+                  {formErrors.username && <p className="mt-1 text-sm text-red-600">{formErrors.username}</p>}
                 </div>
 
                 <div>
@@ -641,13 +788,15 @@ const AdminUserManagement = () => {
                     Email Address <span className="text-red-500">*</span>
                   </label>
                   <input
-                    type="email"
+                    type="text"
+                    inputMode="email"
+                    autoComplete="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    placeholder="Enter email address"
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                    onChange={(e) => { setFormData({...formData, email: e.target.value}); setFormErrors((prev) => ({ ...prev, email: '' })); }}
+                    placeholder="e.g. admin@example.com"
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all ${formErrors.email ? 'border-red-500' : 'border-gray-300'}`}
                   />
+                  {formErrors.email && <p className="mt-1 text-sm text-red-600">{formErrors.email}</p>}
                 </div>
 
                 <div>
@@ -657,11 +806,11 @@ const AdminUserManagement = () => {
                   <input
                     type="password"
                     value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
-                    placeholder="Enter password"
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                    readOnly
+                    className="w-full px-4 py-3 border rounded-lg bg-gray-200 border-gray-400 text-gray-500 cursor-not-allowed"
+                    aria-label="Default admin password (read-only)"
                   />
+                  <p className="mt-1 text-xs text-gray-500">Default for all new admins. They can change it via Forgot password on the login page.</p>
                 </div>
 
                 <div>
@@ -671,45 +820,28 @@ const AdminUserManagement = () => {
                   <input
                     type="text"
                     value={formData.icNumber}
-                    onChange={(e) => setFormData({...formData, icNumber: e.target.value})}
-                    placeholder="Enter IC number"
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                    onChange={(e) => { setFormData({...formData, icNumber: e.target.value}); setFormErrors((prev) => ({ ...prev, icNumber: '' })); }}
+                    placeholder="e.g. 900101-01-1234 or 900101011234 (12 digits)"
+                    maxLength={14}
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all ${formErrors.icNumber ? 'border-red-500' : 'border-gray-300'}`}
                   />
+                  {formErrors.icNumber && <p className="mt-1 text-sm text-red-600">{formErrors.icNumber}</p>}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Role <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={formData.role}
-                      onChange={(e) => setFormData({...formData, role: e.target.value})}
-                      required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                    >
-                      <option value="">Select Role</option>
-                      <option value="admin">Admin</option>
-                      <option value="superadmin">Super Admin</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Status <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={formData.status}
-                      onChange={(e) => setFormData({...formData, status: e.target.value})}
-                      required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                    >
-                      <option value="">Select Status</option>
-                      <option value="active">Active</option>
-                      <option value="suspended">Suspended</option>
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Role <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.role}
+                    onChange={(e) => { setFormData({...formData, role: e.target.value}); setFormErrors((prev) => ({ ...prev, role: '' })); }}
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all min-w-0 ${formErrors.role ? 'border-red-500' : 'border-gray-300'}`}
+                  >
+                    <option value="">Select Role</option>
+                    <option value="admin">Admin</option>
+                    <option value="superadmin">Super Admin</option>
+                  </select>
+                  {formErrors.role && <p className="mt-1 text-sm text-red-600">{formErrors.role}</p>}
                 </div>
               </div>
 
@@ -717,7 +849,7 @@ const AdminUserManagement = () => {
               <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={closeCreateModal}
                   className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
                 >
                   Cancel
@@ -744,70 +876,61 @@ const AdminUserManagement = () => {
       {/* Edit User Modal */}
       {showEditModal && selectedUser && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[672px] max-w-[95vw] shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+          <div className="relative p-4 sm:p-6 border w-full max-w-[672px] shadow-lg rounded-md bg-white min-w-0">
+            <div className="mt-3 min-w-0">
               <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Admin</h3>
-              <form onSubmit={handleUpdateUser} className="space-y-4">
+              <form onSubmit={handleUpdateUser} className={`space-y-4 ${shakeForm ? 'form-shake' : ''}`}>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Username</label>
+                  <label className="block text-sm font-medium text-gray-700">Username <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={formData.username}
-                    onChange={(e) => setFormData({...formData, username: e.target.value})}
-                    required
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    readOnly
+                    className="mt-1 block w-full px-3 py-2 border rounded-md bg-gray-200 border-gray-400 text-gray-500 cursor-not-allowed"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <label className="block text-sm font-medium text-gray-700">Email <span className="text-red-500">*</span></label>
                   <input
-                    type="email"
+                    type="text"
                     value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    required
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    readOnly
+                    className="mt-1 block w-full px-3 py-2 border rounded-md bg-gray-200 border-gray-400 text-gray-500 cursor-not-allowed"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Password (leave blank to keep current)</label>
-                  <input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">IC Number</label>
+                  <label className="block text-sm font-medium text-gray-700">IC Number <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={formData.icNumber}
-                    onChange={(e) => setFormData({...formData, icNumber: e.target.value})}
-                    required
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    readOnly
+                    className="mt-1 block w-full px-3 py-2 border rounded-md bg-gray-200 border-gray-400 text-gray-500 cursor-not-allowed"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Role</label>
+                  <label className="block text-sm font-medium text-gray-700">Role <span className="text-red-500">*</span></label>
                   <select
                     value={formData.role}
-                    onChange={(e) => setFormData({...formData, role: e.target.value})}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    onChange={(e) => { setFormData({...formData, role: e.target.value}); setFormErrors((prev) => ({ ...prev, role: '' })); }}
+                    className={`mt-1 block w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 ${formErrors.role ? 'border-red-500' : 'border-gray-300'}`}
                   >
                     <option value="admin">Admin</option>
                     <option value="superadmin">Super Admin</option>
                   </select>
+                  {formErrors.role && <p className="mt-1 text-sm text-red-600">{formErrors.role}</p>}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Status</label>
+                  <label className="block text-sm font-medium text-gray-700">Status <span className="text-red-500">*</span></label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({...formData, status: e.target.value})}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    onChange={(e) => { setFormData({...formData, status: e.target.value}); setFormErrors((prev) => ({ ...prev, status: '' })); }}
+                    disabled={isCurrentAdmin(selectedUser)}
+                    className={`mt-1 block w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 ${formErrors.status ? 'border-red-500' : 'border-gray-300'} ${isCurrentAdmin(selectedUser) ? 'bg-gray-200 border-gray-400 text-gray-500 cursor-not-allowed' : ''}`}
                   >
                     <option value="active">Active</option>
                     <option value="suspended">Suspended</option>
                   </select>
+                  {formErrors.status && <p className="mt-1 text-sm text-red-600">{formErrors.status}</p>}
                 </div>
                 <div className="flex justify-end space-x-3">
                   <button
@@ -834,8 +957,8 @@ const AdminUserManagement = () => {
       {/* Detail Modal */}
       {showDetailModal && selectedUser && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[672px] max-w-[95vw] shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+          <div className="relative p-4 sm:p-6 border w-full max-w-[672px] shadow-lg rounded-md bg-white min-w-0">
+            <div className="mt-3 min-w-0">
               <h3 className="text-lg font-medium text-gray-900 mb-4">Admin Details</h3>
               <div className="space-y-4">
                 <div className="flex items-center space-x-3">
@@ -850,7 +973,7 @@ const AdminUserManagement = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Role</label>
                     <span className={`mt-1 inline-block px-2 py-1 text-xs font-semibold rounded-full ${
@@ -883,17 +1006,42 @@ const AdminUserManagement = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Permissions</label>
                   <div className="mt-1">
-                    {selectedUser.permissions && selectedUser.permissions.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {selectedUser.permissions.map((permission, index) => (
-                          <span key={index} className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
-                            {permission.replace(/_/g, ' ')}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-500">No specific permissions assigned</p>
-                    )}
+                    {(() => {
+                      const hasExplicit = selectedUser.permissions && selectedUser.permissions.length > 0;
+                      const rawList = hasExplicit
+                        ? selectedUser.permissions
+                        : (ROLE_DEFAULT_PERMISSIONS[selectedUser.role] || []);
+                      const displayList = rawList.filter((p) =>
+                        ALL_PERMISSIONS.some((m) => m.key === p)
+                      );
+                      if (displayList.length === 0) {
+                        return <p className="text-sm text-gray-500">No specific permissions assigned</p>;
+                      }
+                      return (
+                        <>
+                          <div className="flex flex-wrap gap-1">
+                            {displayList.map((permission, index) => {
+                              const meta = ALL_PERMISSIONS.find((p) => p.key === permission);
+                              return (
+                                <span key={index} title={meta?.desc || ''} className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full cursor-default">
+                                  {meta?.label || permission.replace(/_/g, ' ')}
+                                </span>
+                              );
+                            })}
+                          </div>
+                          {selectedUser.role === 'superadmin' && (
+                            <p className="mt-1.5 text-xs text-gray-500">
+                              Super Admin has full access to all features regardless of permissions.
+                            </p>
+                          )}
+                          {!hasExplicit && selectedUser.role !== 'superadmin' && (
+                            <p className="mt-1.5 text-xs text-gray-500">
+                              Default permissions for Admin role
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -917,6 +1065,58 @@ const AdminUserManagement = () => {
                   <p className="mt-1 text-sm text-gray-900">
                     {selectedUser.mfaEnabled ? 'Enabled' : 'Disabled'}
                   </p>
+                </div>
+
+                {/* Log (collapsible, collapsed by default) */}
+                <div className="border border-gray-200 rounded-md overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = !logExpanded;
+                      setLogExpanded(next);
+                      if (next && selectedUser?._id && adminActivity.length === 0) {
+                        setActivityLoading(true);
+                        try {
+                          const res = await adminApi.getAdminActivity(selectedUser._id);
+                          setAdminActivity(res.data?.activities ?? []);
+                        } catch {
+                          setAdminActivity([]);
+                        } finally {
+                          setActivityLoading(false);
+                        }
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100"
+                  >
+                    <span>Log</span>
+                    <svg className={`w-4 h-4 text-gray-500 transition-transform ${logExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {logExpanded && (
+                    <div className="px-3 py-3 bg-white border-t border-gray-200 max-h-64 overflow-y-auto">
+                      <p className="text-xs text-gray-500 mb-3">Actions performed by this admin (e.g. add/update/delete admin, restrict user).</p>
+                      {activityLoading ? (
+                        <p className="text-sm text-gray-500">Loading...</p>
+                      ) : adminActivity.length === 0 ? (
+                        <p className="text-sm text-gray-500">No activity recorded.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {adminActivity.map((a, i) => (
+                            <div key={i} className="bg-gray-50 rounded-lg p-3">
+                              <div className="flex items-center justify-between gap-4 mb-1">
+                                <span className="font-medium text-gray-900 text-sm">{formatActionLabel(a.action)}</span>
+                                <span className="text-xs text-gray-500 shrink-0">
+                                  {a.timestamp ? new Date(a.timestamp).toLocaleString() : ''}
+                                </span>
+                              </div>
+                              <p className="text-gray-700 text-sm">{formatActivityDescription(a.description)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -945,15 +1145,15 @@ const AdminUserManagement = () => {
       {/* Delete Confirmation Modal */}
       {showDeleteModal && userToDelete && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[448px] max-w-[95vw] shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+          <div className="relative p-4 sm:p-6 border w-full max-w-[448px] shadow-lg rounded-md bg-white min-w-0">
+            <div className="mt-3 min-w-0">
               <div className="flex items-center justify-center w-12 h-12 mx-auto bg-red-100 rounded-full mb-4">
                 <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
               </div>
               <h3 className="text-lg font-medium text-gray-900 text-center mb-2">Delete Admin User</h3>
-              <p className="text-sm text-gray-500 text-center mb-6">
+              <p className="text-sm text-gray-500 text-center mb-6 break-words">
                 Are you sure you want to delete <strong>{userToDelete.username}</strong>? 
                 This action cannot be undone and should only be used for cases like misadding users.
               </p>
@@ -962,20 +1162,20 @@ const AdminUserManagement = () => {
                   <strong>Note:</strong> For normal admin departures, consider changing status to "Suspended" instead of deleting.
                 </p>
               </div>
-              <div className="flex justify-end space-x-3">
+              <div className="flex justify-center gap-4">
                 <button
                   onClick={() => {
                     setShowDeleteModal(false);
                     setUserToDelete(null);
                   }}
-                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                  className="min-w-[140px] px-6 py-2.5 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={confirmDeleteUser}
                   disabled={loading}
-                  className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+                  className="min-w-[140px] px-6 py-2.5 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 font-medium"
                 >
                   {loading ? 'Deleting...' : 'Delete Admin'}
                 </button>
@@ -988,8 +1188,8 @@ const AdminUserManagement = () => {
       {/* In-App Alert Modal */}
       {showAlert && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-            <div className="p-6">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 min-w-0">
+            <div className="p-4 sm:p-6">
               <div className="flex items-center">
                 <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
                   alertType === 'error' ? 'bg-red-100' : 

@@ -11,6 +11,15 @@ const DashboardHeader = ({
 }) => {
   return (
     <div className="bg-indigo-600 shadow-sm sticky top-0 z-50">
+      {user?.isRestricted && user?.restrictionEndDate && new Date(user.restrictionEndDate) > new Date() && (
+        <div className="bg-amber-600 text-white px-4 py-2 text-center text-sm">
+          <strong>Forum posting restricted</strong>
+          <span> until {new Date(user.restrictionEndDate).toLocaleDateString()} — You cannot create or reply in the forum.</span>
+          {user.restrictionReason && (
+            <span> Reason: {user.restrictionReason}</span>
+          )}
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center py-4">
           <div className="flex items-center space-x-4">

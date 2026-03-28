@@ -16,17 +16,29 @@ const feedbackSchema = new mongoose.Schema({
     type: String,
     required: true,
     trim: true,
-    maxlength: 2000
+    maxlength: 10000
   },
   category: {
     type: String,
-    enum: ['Bug', 'Feature Request', 'General', 'Complaint', 'Suggestion', 'Other'],
+    enum: ['Bug Report', 'UI / Theme', 'Feature Request', 'Performance', 'Security', 'General', 'Complaint', 'Suggestion', 'Other'],
     required: true,
     default: 'General'
   },
+  parliamentaryCategory: {
+    type: String,
+    trim: true,
+    maxlength: 300,
+    default: ''
+  },
+  linkedTopic: {
+    type: String,
+    trim: true,
+    maxlength: 300,
+    default: ''
+  },
   status: {
     type: String,
-    enum: ['Pending', 'In-Progress', 'Archived'],
+    enum: ['Pending', 'In-Progress', 'Resolved', 'Archived'],
     required: true,
     default: 'Pending'
   },
@@ -34,7 +46,7 @@ const feedbackSchema = new mongoose.Schema({
     type: String,
     enum: ['Low', 'Medium', 'High', 'Critical'],
     required: true,
-    default: 'Medium'
+    default: 'Low'
   },
   rating: {
     type: Number,
@@ -56,9 +68,37 @@ const feedbackSchema = new mongoose.Schema({
       type: Date
     }
   },
+  // Full chronological log of all admin responses
+  responses: {
+    type: [
+      {
+        response: { type: String, trim: true, maxlength: 1000, required: true },
+        respondedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' },
+        respondedAt: { type: Date, default: Date.now }
+      }
+    ],
+    default: []
+  },
   createdDate: {
     type: Date,
     default: Date.now
+  },
+  assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser',
+    default: null
+  },
+  attachments: {
+    type: [
+      {
+        filename: { type: String, required: true },
+        originalName: { type: String, required: true },
+        mimetype: { type: String },
+        size: { type: Number },
+        uploadedAt: { type: Date, default: Date.now }
+      }
+    ],
+    default: []
   }
 }, {
   timestamps: true

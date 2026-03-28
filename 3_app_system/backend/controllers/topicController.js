@@ -1,4 +1,5 @@
 const topicService = require('../services/topicService');
+const { broadcast } = require('../services/sseService');
 
 // Get all topics with optional filtering
 exports.getAllTopics = async (req, res) => {
@@ -57,7 +58,7 @@ exports.createTopic = async (req, res) => {
     };
     
     const topic = await topicService.createTopic(topicData);
-    
+    broadcast('topic_updated', { action: 'create', id: String(topic._id || '') });
     res.status(201).json({
       message: 'Topic created successfully',
       topic
@@ -80,7 +81,7 @@ exports.updateTopic = async (req, res) => {
     };
     
     const topic = await topicService.updateTopic(req.params.id, updateData);
-    
+    broadcast('topic_updated', { action: 'update', id: String(req.params.id) });
     res.json({
       message: 'Topic updated successfully',
       topic
@@ -103,7 +104,7 @@ exports.updateTopic = async (req, res) => {
 exports.deleteTopic = async (req, res) => {
   try {
     await topicService.deleteTopic(req.params.id);
-    
+    broadcast('topic_updated', { action: 'delete', id: String(req.params.id) });
     res.json({
       message: 'Topic deleted successfully'
     });

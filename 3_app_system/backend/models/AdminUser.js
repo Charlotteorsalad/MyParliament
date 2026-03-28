@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const adminUserSchema = new mongoose.Schema({
   username: {
@@ -26,15 +27,12 @@ const adminUserSchema = new mongoose.Schema({
   permissions: [{
     type: String,
     enum: [
-      'manage_admins',
-      'manage_users',
-      'manage_content',
-      'view_analytics',
-      'manage_settings',
-      'approve_posts',
-      'delete_posts',
-      'manage_topics',
-      'manage_mps'
+      'manage_users',    // User List, User Monitor, User Feedback
+      'manage_content',  // Educational Content & Quizzes
+      'manage_mps',      // MP Management
+      'view_analytics',  // Analytics & Reports
+      'moderate_forum',  // Forum Moderation (topics, posts, restrictions)
+      'manage_support'   // Technical Support (incidents, change requests, maintenance)
     ]
   }],
   status: {
@@ -81,11 +79,18 @@ const adminUserSchema = new mongoose.Schema({
     default: Date.now
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  versionKey: false  // disable __v (Mongoose version key) – not needed for this app
 });
 
-// Update the updatedAt field before saving
-adminUserSchema.pre('save', function(next) {
+// Hash password before saving (only when password is new or changed)
+adminUserSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) {
+    this.updatedAt = new Date();
+    return next();
+  }
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
   this.updatedAt = new Date();
   next();
 });

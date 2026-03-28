@@ -1,9 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import { useLanguage } from '../../contexts/LanguageContext';
-import DatePicker from 'react-datepicker';
-import 'react-datepicker/dist/react-datepicker.css';
-import { Input, Button } from '../ui';
+import { Input, Button, DatePickerField } from '../ui';
 
 const states = [
   "Perlis", "Kedah", "Kelantan", "Terengganu", "Penang", "Perak", "Pahang", "Selangor",
@@ -49,15 +47,20 @@ const ProfileSettings = ({
   onProfileChange, 
   onSave, 
   loading, 
+  profileDataLoading = false,
   hasChanges, 
-  validationErrors 
+  validationErrors,
+  shakeForm = false
 }) => {
   const { t } = useLanguage();
+  const formDisabled = loading || profileDataLoading;
   
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${shakeForm ? 'form-shake' : ''}`}>
       <h3 className="text-xl font-semibold text-gray-900">{t('personalInformation')}</h3>
-      
+      {profileDataLoading && (
+        <p className="text-sm text-gray-500">{t('loading')}...</p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Input
           label={t('firstName')}
@@ -65,7 +68,7 @@ const ProfileSettings = ({
           onChange={(e) => onProfileChange('firstName', e.target.value)}
           error={validationErrors.firstName}
           required
-          disabled={loading}
+          disabled={formDisabled}
         />
 
         <Input
@@ -74,25 +77,20 @@ const ProfileSettings = ({
           onChange={(e) => onProfileChange('lastName', e.target.value)}
           error={validationErrors.lastName}
           required
-          disabled={loading}
+          disabled={formDisabled}
         />
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">{t('birthDate')} *</label>
-          <DatePicker
-            selected={profileData.BOD}
-            onChange={(date) => onProfileChange('BOD', date)}
-            dateFormat="dd/MM/yyyy"
-            placeholderText={t('enterBirthDate')}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
-              validationErrors.BOD ? 'border-red-500' : 'border-gray-300'
-            }`}
-            disabled={loading}
-          />
-          {validationErrors.BOD && (
-            <p className="text-sm text-red-600 mt-1">{validationErrors.BOD}</p>
-          )}
-        </div>
+        <DatePickerField
+          label={t('birthDate')}
+          value={profileData.BOD}
+          onChange={(date) => onProfileChange('BOD', date)}
+          placeholder={t('enterBirthDate')}
+          error={validationErrors.BOD}
+          disabled={formDisabled}
+          required
+          minDate={new Date(1900, 0, 1)}
+          maxDate={new Date()}
+        />
 
         <Input.Select
           label={t('state')}
@@ -100,7 +98,7 @@ const ProfileSettings = ({
           onChange={(e) => onProfileChange('state', e.target.value)}
           error={validationErrors.state}
           required
-          disabled={loading}
+          disabled={formDisabled}
           options={states.map(state => ({ value: state, label: state }))}
         />
       </div>
@@ -111,11 +109,14 @@ const ProfileSettings = ({
         onChange={(e) => onProfileChange('constituency', e.target.value)}
         error={validationErrors.constituency}
         required
-        disabled={loading || !profileData.state}
-        options={(constituencies[profileData.state] || []).map(constituency => ({ 
-          value: constituency, 
-          label: constituency 
-        }))}
+        disabled={formDisabled || !profileData.state}
+        options={[
+          { value: '', label: ' ' },
+          ...(constituencies[profileData.state] || []).map(constituency => ({ 
+            value: constituency, 
+            label: constituency 
+          }))
+        ]}
       />
 
       <Button
@@ -135,8 +136,10 @@ ProfileSettings.propTypes = {
   onProfileChange: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   loading: PropTypes.bool.isRequired,
+  profileDataLoading: PropTypes.bool,
   hasChanges: PropTypes.bool.isRequired,
-  validationErrors: PropTypes.object.isRequired
+  validationErrors: PropTypes.object.isRequired,
+  shakeForm: PropTypes.bool
 };
 
 export default ProfileSettings;

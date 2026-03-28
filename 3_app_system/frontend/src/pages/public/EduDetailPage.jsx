@@ -1,21 +1,26 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useApi } from '../../hooks';
 import { useAuth } from '../../hooks';
-import { eduApi, quizApi } from '../../api';
+import { eduApi, quizApi, bookmarkApi, userApi } from '../../api';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { useSSEEvent } from '../../contexts/SSEContext';
 
 export default function EduDetailPage() {
     const { resourceId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const [selectedAnswers, setSelectedAnswers] = useState({});
     const [showResults, setShowResults] = useState(false);
-    const [isBookmarked, setIsBookmarked] = useState(false);
+    const [isBookmarked, setIsBookmarked] = useState(
+        Boolean(location.state?.isBookmarked)
+    );
     const [resourceData, setResourceData] = useState(null);
     const [quizSubmission, setQuizSubmission] = useState(null);
     const [loading, setLoading] = useState(true);
     const { isAuthenticated } = useAuth();
     const [error, setError] = useState(null);
+    const [quizError, setQuizError] = useState(null);
     const { executeApiCall } = useApi();
     const { t } = useLanguage();
 
@@ -28,6 +33,10 @@ export default function EduDetailPage() {
         const fetchResourceData = async () => {
             try {
                 setLoading(true);
+                setShowResults(false);
+                setQuizSubmission(null);
+                setSelectedAnswers({});
+                setQuizError(null);
                 const data = await executeApiCall(() => eduApi.getById(resourceId));
                 setResourceData(data);
             } catch (err) {
@@ -43,6 +52,77 @@ export default function EduDetailPage() {
         }
     }, [resourceId, executeApiCall]);
 
+    // Real-time: if admin updates/publishes/archives the resource currently being viewed, refresh it
+    useSSEEvent('edu_updated', useCallback((data) => {
+        if (!resourceId) return;
+        if (!data?.id || data.id === resourceId) {
+            // Re-run the fetch by triggering the existing useEffect (no-op dep change not needed,
+            // just call the API directly)
+            executeApiCall(() => eduApi.getById(resourceId))
+                .then(setResourceData)
+                .catch(() => {});
+        }
+    }, [resourceId, executeApiCall]));
+
+    // Restore previous quiz submission after resource is loaded (survives refresh/logout/login)
+    useEffect(() => {
+        if (!isAuthenticated || !resourceData || !resourceData.quiz) return;
+        const restoreSubmission = async () => {
+            try {
+                const data = await quizApi.getSubmissionByResource(resourceId);
+                if (data.submission) {
+                    const sub = data.submission;
+                    // Rebuild selectedAnswers from stored answers array
+                    const restored = {};
+                    (sub.answers || []).forEach((ans, idx) => { restored[idx] = ans; });
+                    setSelectedAnswers(restored);
+                    setQuizSubmission(sub);
+                    setShowResults(true);
+                }
+            } catch (err) {
+                // If not found or not authenticated, silently ignore
+            }
+        };
+        restoreSubmission();
+    }, [isAuthenticated, resourceId, resourceData]);
+
+    const returnTo = new URLSearchParams(location.search).get('returnTo');
+
+    // Log view for Personal Activities (only when authenticated)
+    useEffect(() => {
+        if (!isAuthenticated || !resourceData) return;
+        userApi.logView('edu', resourceId, resourceData.title || resourceData.name || resourceId);
+    }, [isAuthenticated, resourceId, resourceData]);
+
+    // Sync initial bookmark state from navigation (if coming from list)
+    useEffect(() => {
+        if (location.state && typeof location.state.isBookmarked === 'boolean') {
+            setIsBookmarked(location.state.isBookmarked);
+        }
+    }, [location.state]);
+
+    // On direct open/refresh, check bookmark status from backend
+    useEffect(() => {
+        if (!isAuthenticated || !resourceId) return;
+        const loadBookmark = async () => {
+            try {
+                const data = await bookmarkApi.getBookmarks({ type: 'education', page: 1, limit: 1000 });
+                const idStr = String(resourceId);
+                const exists = (data.bookmarks || []).some((b) => {
+                    const res = b.resourceId;
+                    if (!res) return false;
+                    const rid = typeof res === 'string' ? res : String(res._id || res.id);
+                    return rid === idStr;
+                });
+                setIsBookmarked(exists);
+            } catch (err) {
+                // fail silently; star will reflect last known state
+                console.warn('[EduDetailPage] Failed to load bookmark state:', err);
+            }
+        };
+        loadBookmark();
+    }, [isAuthenticated, resourceId]);
+
 
     const handleAnswerSelect = (questionIndex, answerIndex) => {
         setSelectedAnswers(prev => ({
@@ -56,10 +136,11 @@ export default function EduDetailPage() {
             navigate('/login');
             return;
         }
+        setQuizError(null);
 
         try {
             const answers = Object.values(selectedAnswers);
-            const result = await executeApiCall(() => 
+            const result = await executeApiCall(() =>
                 quizApi.submitQuiz({
                     resourceId,
                     answers,
@@ -71,19 +152,50 @@ export default function EduDetailPage() {
             setShowResults(true);
         } catch (err) {
             console.error('Failed to submit quiz:', err);
-            setError('Failed to submit quiz. Please try again.');
+            const status = err.response?.status;
+            const data = err.response?.data || {};
+            const serverMessage = data.message || data.error?.message;
+            let message = serverMessage || err.message || 'Failed to submit quiz. Please try again.';
+            if (status >= 500 && !serverMessage) {
+                message = 'Server error. Please try again later.';
+            }
+            setQuizError(message);
         }
     };
 
-    const handleBookmark = () => {
-        setIsBookmarked(!isBookmarked);
+    const handleBookmark = async () => {
+        if (!isAuthenticated) {
+            navigate('/login');
+            return;
+        }
+        const idStr = String(resourceId);
+        if (!idStr) return;
+
+        try {
+            const result = await bookmarkApi.toggleBookmark({
+                resourceId: idStr,
+                type: 'education',
+                title: resourceData.title || resourceData.name || 'Education Resource',
+                description: resourceData.description || '',
+            });
+            setIsBookmarked(result.action === 'added');
+        } catch (err) {
+            console.error('Failed to toggle bookmark:', err);
+        }
     };
 
     const getScore = () => {
         if (!resourceData.quiz || !resourceData.quiz.questions) return 0;
         let correct = 0;
         resourceData.quiz.questions.forEach((question, questionIndex) => {
-            if (selectedAnswers[questionIndex] === question.correctAnswer) {
+            const qType = question.type || 'multiple_choice';
+            const picked = selectedAnswers[questionIndex];
+            if (qType === 'true_false') {
+                const ca = question.correctAnswer;
+                const expected =
+                    ca === true || ca === 'true' ? 0 : ca === false || ca === 'false' ? 1 : -1;
+                if (expected >= 0 && picked === expected) correct++;
+            } else if (picked === Number(question.correctAnswer)) {
                 correct++;
             }
         });
@@ -100,14 +212,14 @@ export default function EduDetailPage() {
     // Helper function to get file icon based on file type
     const getFileIcon = (file) => {
         const type = file.mimeType || file.type;
-        if (type.startsWith('image/')) return '🖼️';
-        if (type.startsWith('video/')) return '🎥';
-        if (type.startsWith('audio/')) return '🎵';
-        if (type.includes('pdf')) return '📄';
-        if (type.includes('word')) return '📝';
-        if (type.includes('excel') || type.includes('spreadsheet')) return '📊';
-        if (type.includes('powerpoint') || type.includes('presentation')) return '📈';
-        return '📎';
+        if (type.startsWith('image/')) return '';
+        if (type.startsWith('video/')) return '';
+        if (type.startsWith('audio/')) return '';
+        if (type.includes('pdf')) return '';
+        if (type.includes('word')) return '';
+        if (type.includes('excel') || type.includes('spreadsheet')) return '';
+        if (type.includes('powerpoint') || type.includes('presentation')) return '';
+        return '';
     };
 
     // Helper function to format file size
@@ -136,8 +248,8 @@ export default function EduDetailPage() {
         );
     }
 
-    // Error state
-    if (error || !resourceData) {
+    // Error state: full-page only when resource failed to load (not for quiz submit errors)
+    if (!resourceData) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
                 <div className="text-center">
@@ -166,6 +278,18 @@ export default function EduDetailPage() {
             {/* Header */}
             <div className="bg-white shadow-sm border-b border-gray-200">
                 <div className="max-w-4xl mx-auto px-6 py-6">
+                    {returnTo && (
+                        <button
+                            type="button"
+                            onClick={() => navigate(returnTo)}
+                            className="mb-4 flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                            </svg>
+                            <span className="text-sm font-medium">{t('backToPreviousPage')}</span>
+                        </button>
+                    )}
                     <div className="flex items-center justify-between">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -260,7 +384,7 @@ export default function EduDetailPage() {
                         {/* Content Attachments */}
                         {resourceData.contentAttachments && resourceData.contentAttachments.length > 0 && (
                             <div className="mt-8 pt-6 border-t border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-4">📎 {t('contentAttachments')}</h3>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('contentAttachments')}</h3>
                                 <div className="space-y-4">
                                     {resourceData.contentAttachments.map((attachment, index) => (
                                         <div key={index} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
@@ -278,13 +402,11 @@ export default function EduDetailPage() {
                                                         const fullUrl = attachment.url.startsWith('http') 
                                                           ? attachment.url 
                                                           : `http://localhost:5000${attachment.url}`;
-                                                        console.log('Opening file:', fullUrl);
-                                                        console.log('Original URL:', attachment.url);
                                                         window.open(fullUrl, '_blank', 'noopener,noreferrer');
                                                     }}
                                                     className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded hover:bg-blue-200 transition-colors"
                                                 >
-                                                    👁️ {t('view')}
+                                                    {t('view')}
                                                 </button>
                                                 <button
                                                     onClick={() => {
@@ -295,7 +417,7 @@ export default function EduDetailPage() {
                                                     }}
                                                     className="px-3 py-1 text-xs font-medium text-green-600 bg-green-100 rounded hover:bg-green-200 transition-colors"
                                                 >
-                                                    📥 {t('download')}
+                                                    {t('download')}
                                                 </button>
                                             </div>
                                         </div>
@@ -310,88 +432,141 @@ export default function EduDetailPage() {
                 {resourceData.quiz && resourceData.quiz.questions && resourceData.quiz.questions.length > 0 && (
                     <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
                         <div className="p-8">
-                            <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('quizzes')}</h2>
-                            
-                            {resourceData.quiz.questions.map((question, questionIndex) => (
+                            <h2 className="text-2xl font-bold text-gray-900">{t('quizzes')}</h2>
+                            {showResults && quizSubmission ? (
+                                <p className="text-sm text-gray-500 mt-1 mb-6">{t('answered')}</p>
+                            ) : (
+                                <div className="mb-6" />
+                            )}
+                            {resourceData.quiz.questions.map((question, questionIndex) => {
+                                const qType = question.type || 'multiple_choice';
+                                // True/False: admin keeps placeholder MC slots; MCQ: coerce option text (strings or { text } / legacy shapes).
+                                const optionRows =
+                                    qType === 'true_false'
+                                        ? ['True', 'False']
+                                        : (Array.isArray(question.options) ? question.options : []).map((opt) => {
+                                            if (opt == null) return '';
+                                            if (typeof opt === 'string') return opt;
+                                            if (typeof opt === 'object') {
+                                                if (opt.text != null) return String(opt.text);
+                                                if (opt.label != null) return String(opt.label);
+                                            }
+                                            return String(opt);
+                                        });
+
+                                return (
                             <div key={questionIndex} className="mb-8">
                                     <h3 className="text-lg font-semibold text-gray-900 mb-4">
                                         {t('question')} {questionIndex + 1}: {question.question}
                                 </h3>
                                 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {question.options.map((option, optionIndex) => (
-                                        <label 
-                                            key={optionIndex}
-                                            className={`flex items-center p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                                                selectedAnswers[questionIndex] === optionIndex
-                                                    ? 'border-indigo-500 bg-indigo-50'
-                                                    : 'border-gray-200 hover:border-gray-300'
-                                            } ${
-                                                showResults && quizSubmission
-                                                    ? optionIndex === question.correctAnswer
-                                                        ? 'border-green-500 bg-green-50'
-                                                        : selectedAnswers[questionIndex] === optionIndex && optionIndex !== question.correctAnswer
-                                                        ? 'border-red-500 bg-red-50'
-                                                        : 'border-gray-200'
-                                                    : ''
-                                            }`}
-                                        >
-                                            <input
-                                                type="radio"
-                                                name={`question-${questionIndex}`}
-                                                value={optionIndex}
-                                                checked={selectedAnswers[questionIndex] === optionIndex}
-                                                onChange={() => handleAnswerSelect(questionIndex, optionIndex)}
-                                                className="sr-only"
-                                            />
-                                            <div className={`w-4 h-4 rounded-full border-2 mr-3 flex items-center justify-center ${
-                                                selectedAnswers[questionIndex] === optionIndex
-                                                    ? 'border-indigo-500 bg-indigo-500'
-                                                    : 'border-gray-300'
-                                            } ${
-                                                showResults && quizSubmission
-                                                    ? optionIndex === question.correctAnswer
-                                                        ? 'border-green-500 bg-green-500'
-                                                        : selectedAnswers[questionIndex] === optionIndex && optionIndex !== question.correctAnswer
-                                                        ? 'border-red-500 bg-red-500'
-                                                        : 'border-gray-300'
-                                                    : ''
-                                            }`}>
-                                                {selectedAnswers[questionIndex] === optionIndex && (
-                                                    <div className="w-2 h-2 bg-white rounded-full"></div>
-                                                )}
-                                            </div>
-                                            <span className="text-gray-700 font-medium">
-                                                {String.fromCharCode(65 + optionIndex)}. {option}
-                                            </span>
-                                        </label>
-                                    ))}
+                                <div
+                                    className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                                    style={showResults && quizSubmission ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+                                >
+                                    {optionRows.map((option, optionIndex) => {
+                                        const readonly = showResults && !!quizSubmission;
+                                        // Always use backend result when available (most accurate)
+                                        const result = quizSubmission?.results?.[questionIndex];
+                                        const correctIdx = result != null ? Number(result.correctAnswer) : undefined;
+                                        const userAnswerIdx = result != null ? Number(result.userAnswer) : selectedAnswers[questionIndex];
+                                        const isUserPicked = optionIndex === userAnswerIdx;
+                                        // Only colour after submit
+                                        const isCorrect = readonly && optionIndex === correctIdx;
+                                        const isWrong = readonly && isUserPicked && !isCorrect;
+
+                                        const dotColor = readonly
+                                            ? isCorrect ? 'border-green-500 bg-green-500'
+                                                : isWrong ? 'border-red-500 bg-red-500'
+                                                : 'border-gray-300'
+                                            : isUserPicked ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300';
+
+                                        const showDot = readonly ? (isCorrect || isWrong) : isUserPicked;
+
+                                        const optionLabel =
+                                            qType === 'true_false'
+                                                ? option
+                                                : `${String.fromCharCode(65 + optionIndex)}. ${option}`;
+
+                                        const optionContent = (
+                                            <>
+                                                <div className={`w-4 h-4 rounded-full border-2 mr-3 flex items-center justify-center flex-shrink-0 ${dotColor}`}>
+                                                    {showDot && <div className="w-2 h-2 bg-white rounded-full" />}
+                                                </div>
+                                                <span className="text-gray-700 font-medium">
+                                                    {optionLabel}
+                                                </span>
+                                            </>
+                                        );
+
+                                        if (readonly) {
+                                            return (
+                                                <div
+                                                    key={optionIndex}
+                                                    className={`flex items-center p-4 border-2 rounded-lg select-none ${
+                                                        isCorrect ? 'border-green-500 bg-green-50'
+                                                        : isWrong ? 'border-red-500 bg-red-50'
+                                                        : 'border-gray-200 bg-white'
+                                                    }`}
+                                                >
+                                                    {optionContent}
+                                                </div>
+                                            );
+                                        }
+                                        return (
+                                            <label
+                                                key={optionIndex}
+                                                className={`flex items-center p-4 border-2 rounded-lg cursor-pointer transition-all hover:border-gray-300 ${
+                                                    isUserPicked ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-white'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name={`question-${questionIndex}`}
+                                                    value={optionIndex}
+                                                    checked={isUserPicked}
+                                                    onChange={() => handleAnswerSelect(questionIndex, optionIndex)}
+                                                    className="sr-only"
+                                                />
+                                                {optionContent}
+                                            </label>
+                                        );
+                                    })}
                                 </div>
                             </div>
-                        ))}
+                                );
+                            })}
 
                         {/* Quiz Actions */}
-                        <div className="flex items-center justify-between pt-6 border-t border-gray-200">
-                            <div className="flex items-center gap-4">
-                                <button
-                                    onClick={handleSubmitQuiz}
-                                    disabled={Object.keys(selectedAnswers).length !== resourceData.quiz.questions.length || !isAuthenticated}
-                                    className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                                >
-                                    {!isAuthenticated ? t('loginToSubmitQuiz') : t('submitQuiz')}
-                                </button>
-                                
-                                {showResults && quizSubmission && (
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-sm text-gray-600">{t('scoreLabel')}</span>
-                                        <span className={`text-lg font-bold ${getScoreColor(quizSubmission.score, 100)}`}>
-                                            {quizSubmission.score}%
-                                        </span>
-                                        <span className={`text-sm ${quizSubmission.passed ? 'text-green-600' : 'text-red-600'}`}>
-                                            {quizSubmission.passed ? t('passed') : t('failed')}
-                                        </span>
-                                    </div>
-                                )}
+                        <div className="flex flex-col gap-3 pt-6 border-t border-gray-200">
+                            {quizError && (
+                                <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                                    {quizError}
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                    {!(showResults && quizSubmission) && (
+                                        <button
+                                            onClick={handleSubmitQuiz}
+                                            disabled={Object.keys(selectedAnswers).length !== resourceData.quiz.questions.length || !isAuthenticated}
+                                            className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            {!isAuthenticated ? t('loginToSubmitQuiz') : t('submitQuiz')}
+                                        </button>
+                                    )}
+                                    {showResults && quizSubmission && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-gray-600">{t('scoreLabel')}</span>
+                                            <span className={`text-lg font-bold ${getScoreColor(quizSubmission.score, 100)}`}>
+                                                {quizSubmission.score}%
+                                            </span>
+                                            {quizSubmission.passed && (
+                                                <span className="text-sm text-green-600">{t('passed')}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -416,13 +591,11 @@ export default function EduDetailPage() {
                                                         const fullUrl = attachment.url.startsWith('http') 
                                                           ? attachment.url 
                                                           : `http://localhost:5000${attachment.url}`;
-                                                        console.log('Opening file:', fullUrl);
-                                                        console.log('Original URL:', attachment.url);
                                                         window.open(fullUrl, '_blank', 'noopener,noreferrer');
                                                     }}
                                                     className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded hover:bg-blue-200 transition-colors"
                                                 >
-                                                    👁️ View
+                                                    View
                                                 </button>
                                                 <button
                                                     onClick={() => {
@@ -433,7 +606,7 @@ export default function EduDetailPage() {
                                                     }}
                                                     className="px-3 py-1 text-xs font-medium text-green-600 bg-green-100 rounded hover:bg-green-200 transition-colors"
                                                 >
-                                                    📥 Download
+                                                    Download
                                                 </button>
                                             </div>
                                         </div>

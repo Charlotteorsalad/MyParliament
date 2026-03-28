@@ -2,47 +2,38 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
+const nodemailer = require('nodemailer');
 const AdminUser = require('../models/AdminUser');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
-console.log('AdminAuthService: JWT_SECRET loaded:', JWT_SECRET ? 'Yes' : 'No');
-console.log('AdminAuthService: JWT_SECRET value:', JWT_SECRET);
+const APP_NAME = process.env.ADMIN_MFA_ISSUER || 'MyParliament';
 
-// Simple OTP verification function
-// In production, use a proper TOTP library like 'speakeasy'
-const verifyOTP = (secret, otp) => {
-  // For debugging purposes, let's accept a few test OTPs
-  const testOTPs = ['123456', '000000', '111111', '745107'];
-  
-  // Normalize the OTP: convert to string and trim whitespace
-  const normalizedOTP = String(otp).trim();
-  
-  console.log('🔍 Original OTP:', `"${otp}"`);
-  console.log('🔍 Normalized OTP:', `"${normalizedOTP}"`);
-  console.log('🔍 OTP type:', typeof otp);
-  console.log('🔍 Normalized type:', typeof normalizedOTP);
-  
-  if (testOTPs.includes(normalizedOTP)) {
-    console.log('✅ Test OTP accepted:', normalizedOTP);
-    return true;
+// Real TOTP verification (Google Authenticator / Authy compatible)
+const verifyTOTP = (secret, token) => {
+  if (!secret || !token) return false;
+  const normalizedToken = String(token).trim();
+  if (normalizedToken.length !== 6) return false;
+  try {
+    return speakeasy.totp.verify({
+      secret,
+      encoding: 'base32',
+      token: normalizedToken,
+      window: 1  // allow ±1 step (30s) clock drift
+    });
+  } catch (err) {
+    console.error('TOTP verify error:', err.message);
+    return false;
   }
-  
-  // For now, return false for any other OTP
-  // In production, implement proper TOTP verification
-  console.log('❌ OTP not in test list:', normalizedOTP);
-  return false;
 };
 
 // Generate JWT token
 const generateToken = (id) => {
-  console.log('AdminAuthService: Generating token for admin ID:', id);
-  console.log('AdminAuthService: Using JWT_SECRET:', JWT_SECRET);
-  const token = jwt.sign({ id }, JWT_SECRET, {
+  return jwt.sign({ id }, JWT_SECRET, {
     expiresIn: JWT_EXPIRE,
   });
-  console.log('AdminAuthService: Generated token:', token.substring(0, 20) + '...');
-  return token;
 };
 
 // Register new admin user
@@ -105,61 +96,39 @@ const registerAdmin = async (adminData) => {
 const loginAdmin = async (loginData) => {
   try {
     const { email, password, otp } = loginData;
-    
-    console.log('🔍 Login attempt for email:', email);
-    console.log('🔍 OTP provided:', otp ? 'Yes' : 'No');
 
-    // Check if admin exists (case-insensitive)
     const admin = await AdminUser.findOne({ email: new RegExp(`^${email}$`, 'i') });
-    console.log('🔍 Admin found:', admin ? 'Yes' : 'No');
     
     if (!admin) {
-      console.log('❌ Admin not found for email:', email);
       throw new Error('Invalid credentials');
     }
 
-    // Check if admin is active
     if (admin.status !== 'active') {
-      console.log('❌ Admin account not active. Status:', admin.status);
       throw new Error('Account is not active');
     }
 
-    // Check password
     const isPasswordValid = await bcrypt.compare(password, admin.password);
-    console.log('🔍 Password valid:', isPasswordValid);
     
     if (!isPasswordValid) {
-      console.log('❌ Invalid password for email:', email);
       throw new Error('Invalid credentials');
     }
 
-    // Check OTP if MFA is enabled
     if (admin.mfaEnabled && otp) {
-      console.log('🔍 MFA enabled, verifying OTP...');
-      console.log('🔍 Admin MFA secret:', admin.mfaSecret);
-      console.log('🔍 Provided OTP:', otp);
-      
-      // For now, let's use a simple OTP verification
-      // In production, you'd use a proper TOTP library like 'speakeasy'
-      const isValidOTP = verifyOTP(admin.mfaSecret, otp);
-      console.log('🔍 OTP valid:', isValidOTP);
-      
+      if (!admin.mfaSecret) {
+        throw new Error('Invalid OTP');
+      }
+      const isValidOTP = verifyTOTP(admin.mfaSecret, otp);
       if (!isValidOTP) {
-        console.log('❌ Invalid OTP for email:', email);
         throw new Error('Invalid OTP');
       }
     } else if (admin.mfaEnabled && !otp) {
-      console.log('❌ MFA enabled but no OTP provided');
       throw new Error('OTP required');
     }
 
-    // Update last login
     admin.lastLogin = new Date();
     await admin.save();
 
-    // Generate token
     const token = generateToken(admin._id);
-    console.log('✅ Login successful for email:', email);
 
     return {
       success: true,
@@ -172,11 +141,11 @@ const loginAdmin = async (loginData) => {
         permissions: admin.permissions,
         status: admin.status,
         isFirstLogin: admin.isFirstLogin,
-        lastLogin: admin.lastLogin
+        lastLogin: admin.lastLogin,
+        mfaEnabled: !!admin.mfaEnabled
       }
     };
   } catch (error) {
-    console.log('❌ Login error:', error.message);
     throw error;
   }
 };
@@ -250,58 +219,105 @@ const changeAdminPassword = async (id, currentPassword, newPassword) => {
   }
 };
 
-// Forgot password
-const forgotPassword = async (email) => {
+// Send admin password reset email (same SMTP as user)
+const sendAdminPasswordResetEmail = async (email, token) => {
+  const emailUser = process.env.EMAIL_USER?.trim();
+  const emailPass = (process.env.EMAIL_PASS || '').replace(/\s/g, '').trim();
+  if (!emailUser || !emailPass) {
+    throw new Error('Email service not configured');
+  }
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: process.env.SMTP_PORT || 587,
+    secure: process.env.SMTP_SECURE === 'true' || false,
+    auth: { user: emailUser, pass: emailPass },
+    tls: { rejectUnauthorized: false }
+  });
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const resetUrl = `${frontendUrl}/admin/reset-password?token=${token}`;
+  const mailOptions = {
+    from: `"My Parliament Admin" <${emailUser}>`,
+    to: email,
+    subject: 'Admin Password Reset - My Parliament',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #15803d;">Admin Password Reset</h2>
+        <p>You requested a password reset for your My Parliament <strong>admin</strong> account.</p>
+        <p>Click the button below to reset your password:</p>
+        <a href="${resetUrl}" style="display: inline-block; background: #15803d; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0;">Reset Admin Password</a>
+        <p><strong>This link is valid for 10 minutes only.</strong> After that you will need to request a new reset link.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+        <p>Best regards,<br>The My Parliament Team</p>
+      </div>
+    `
+  };
   try {
-    const admin = await AdminUser.findOne({ email: new RegExp(`^${email}$`, 'i') });
-    if (!admin) {
-      throw new Error('Admin not found');
+    await transporter.sendMail(mailOptions);
+  } catch (firstErr) {
+    console.error('Admin reset email first send failed, retrying once...', firstErr.message);
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (retryErr) {
+      console.error('Admin reset email send failed:', retryErr);
+      throw new Error('Could not send reset email. Please try again later.');
     }
-
-    // Generate reset token
-    const resetToken = crypto.randomBytes(20).toString('hex');
-    const resetTokenExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-    admin.resetPasswordToken = resetToken;
-    admin.resetPasswordExpire = new Date(resetTokenExpire);
-    await admin.save();
-
-    return {
-      success: true,
-      resetToken,
-      message: 'Password reset token generated'
-    };
-  } catch (error) {
-    throw error;
   }
 };
 
-// Reset password
+// Forgot password: send reset link by email only if admin exists (same response either way - no info leak)
+// Use findOneAndUpdate so we only set reset token fields (no load+save = no risk of overwriting/deleting admin)
+const forgotPassword = async (email) => {
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  const resetToken = crypto.randomBytes(20).toString('hex');
+  const resetTokenExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  const admin = await AdminUser.findOneAndUpdate(
+    { email: new RegExp(`^${normalizedEmail}$`, 'i') },
+    { $set: { resetPasswordToken: resetToken, resetPasswordExpire: resetTokenExpire } },
+    { new: true, runValidators: true }
+  );
+
+  if (admin) {
+    try {
+      await sendAdminPasswordResetEmail(admin.email, resetToken);
+    } catch (err) {
+      console.error('Admin forgot password: email send failed', err);
+      throw new Error('Could not send reset email. Please try again later.');
+    }
+  }
+
+  return {
+    success: true,
+    message: 'If an admin account exists for this email, a reset link has been sent. Please check your inbox and spam folder.'
+  };
+};
+
+// Reset password: use findOneAndUpdate with $set only so we never overwrite the whole
+// document (avoids risk of superadmin/doc loss if something goes wrong mid-flow).
 const resetPassword = async (resetToken, newPassword) => {
-  try {
-    const admin = await AdminUser.findOne({
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+  const admin = await AdminUser.findOneAndUpdate(
+    {
       resetPasswordToken: resetToken,
       resetPasswordExpire: { $gt: Date.now() }
-    });
+    },
+    {
+      $set: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpire: null
+      }
+    },
+    { new: true, runValidators: true }
+  );
 
-    if (!admin) {
-      throw new Error('Invalid or expired reset token');
-    }
-
-    // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    // Update password and clear reset token
-    admin.password = hashedPassword;
-    admin.resetPasswordToken = null;
-    admin.resetPasswordExpire = null;
-    await admin.save();
-
-    return { success: true, message: 'Password reset successfully' };
-  } catch (error) {
-    throw error;
+  if (!admin) {
+    throw new Error('Invalid or expired reset token');
   }
+
+  return { success: true, message: 'Password reset successfully' };
 };
 
 // Get all admins (for superadmin)
@@ -314,17 +330,59 @@ const getAllAdminUsers = async () => {
   }
 };
 
-// Delete admin (for superadmin)
+// Delete admin (for superadmin). Never allow deleting the last superadmin.
 const deleteAdmin = async (id) => {
-  try {
-    const admin = await AdminUser.findByIdAndDelete(id);
-    if (!admin) {
-      throw new Error('Admin not found');
-    }
-    return { success: true, message: 'Admin deleted successfully' };
-  } catch (error) {
-    throw error;
+  const admin = await AdminUser.findById(id);
+  if (!admin) {
+    throw new Error('Admin not found');
   }
+  if (admin.role === 'superadmin') {
+    const superadminCount = await AdminUser.countDocuments({ role: 'superadmin' });
+    if (superadminCount <= 1) {
+      throw new Error('Cannot delete the last superadmin. Ensure at least one superadmin exists.');
+    }
+  }
+  await AdminUser.findByIdAndDelete(id);
+  return { success: true, message: 'Admin deleted successfully' };
+};
+
+// Setup MFA: generate secret and QR for authenticator app (does not enable MFA yet)
+const setupMfa = async (adminId) => {
+  const admin = await AdminUser.findById(adminId);
+  if (!admin) throw new Error('Admin not found');
+  const secret = speakeasy.generateSecret({
+    length: 20,
+    name: `${APP_NAME} (${admin.email})`,
+    issuer: APP_NAME
+  });
+  admin.mfaSecret = secret.base32;
+  admin.mfaEnabled = false;
+  await admin.save();
+  const otpauthUrl = secret.otpauth_url;
+  const qrDataUrl = await QRCode.toDataURL(otpauthUrl, { margin: 2 });
+  return { secret: secret.base32, otpauthUrl, qrDataUrl };
+};
+
+// Enable MFA: verify one-time code from app then turn on MFA
+const enableMfa = async (adminId, token) => {
+  const admin = await AdminUser.findById(adminId);
+  if (!admin) throw new Error('Admin not found');
+  if (!admin.mfaSecret) throw new Error('Setup MFA first');
+  const isValid = verifyTOTP(admin.mfaSecret, token);
+  if (!isValid) throw new Error('Invalid OTP');
+  admin.mfaEnabled = true;
+  await admin.save();
+  return { success: true, message: 'MFA enabled' };
+};
+
+// Disable MFA
+const disableMfa = async (adminId) => {
+  const admin = await AdminUser.findById(adminId);
+  if (!admin) throw new Error('Admin not found');
+  admin.mfaSecret = null;
+  admin.mfaEnabled = false;
+  await admin.save();
+  return { success: true, message: 'MFA disabled' };
 };
 
 module.exports = {
@@ -336,5 +394,8 @@ module.exports = {
   forgotPassword,
   resetPassword,
   getAllAdminUsers,
-  deleteAdmin
+  deleteAdmin,
+  setupMfa,
+  enableMfa,
+  disableMfa
 };

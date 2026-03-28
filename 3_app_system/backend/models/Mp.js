@@ -20,8 +20,25 @@ const MpSchema = new Schema(
 
     performance: {
       attendanceRate: { type: Number, default: null },
+      /** reply / total turns × 100 — from precomputeMpIssueSpeakingStats.js */
       responseRate: { type: Number, default: null },
-      escalateRate: { type: Number, default: null }
+      /** ask / total turns × 100 — from precomputeMpIssueSpeakingStats.js */
+      askRate: { type: Number, default: null },
+      /** escalate / total turns × 100 — from precomputeMpIssueSpeakingStats.js */
+      escalateRate: { type: Number, default: null },
+      /** interjection / total turns × 100 — from precomputeMpIssueSpeakingStats.js */
+      interjectionRate: { type: Number, default: null },
+      /** Average sentiment score 0–100 (50=neutral) — from precomputeMpIssueSpeakingStats.js */
+      sentimentScore: { type: Number, default: null },
+      /** Pre-computed attendance by parliament term (from precomputeMpAttendance.js) */
+      attendanceByTerm: { type: [Schema.Types.Mixed], default: undefined },
+      /** When attendance was last pre-computed (ISO date) */
+      attendanceComputedAt: { type: Date, default: null },
+      /** Top 8 recent statements — from precomputeMpIssueSpeakingStats.js */
+      recentStatements: { type: [Schema.Types.Mixed], default: undefined },
+      /** When speaking stats were last pre-computed and which pipeline was used */
+      speakingStatsComputedAt: { type: Date, default: null },
+      speakingStatsPipeline: { type: String, default: null },
     },
 
     topicDiscussed: { type: [Schema.Types.Mixed], default: [] },

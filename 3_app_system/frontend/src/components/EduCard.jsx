@@ -104,8 +104,8 @@ function EduCard({ item }) {
           />
         </div>
         <div className="text-xs text-purple-700 mt-2">
-          <p>🕒 {item.timeToRead} min read</p>
-          <p>🎯 {item.difficulty}</p>
+          <p>{item.timeToRead} min read</p>
+          <p>{item.difficulty}</p>
         </div>
       </div>
     </div>

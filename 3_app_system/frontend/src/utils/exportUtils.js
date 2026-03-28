@@ -73,7 +73,9 @@ const generateReportContent = (data) => {
     content += `Unique Visitors: ${data.contentEngagement.uniqueVisitors}\n`;
     content += `Average Session Time: ${data.contentEngagement.averageSessionTime}\n`;
     content += `Bounce Rate: ${data.contentEngagement.bounceRate}\n`;
-    content += `Total Content: ${data.contentEngagement.totalContent}\n\n`;
+    content += `Total Content: ${data.contentEngagement.totalContent}\n`;
+    content += `Quizzes Answered: ${data.contentEngagement.quizzesAnswered ?? 0}\n`;
+    content += `Unique Users Who Answered Quiz: ${data.contentEngagement.uniqueUsersWhoAnsweredQuiz ?? 0}\n\n`;
     
     if (data.contentEngagement.topContent) {
       content += `TOP PERFORMING CONTENT:\n`;
@@ -150,6 +152,8 @@ const generateCSVContent = (data) => {
     csvContent += `Content Engagement,Average Session Time,${data.contentEngagement.averageSessionTime},${timestamp}\n`;
     csvContent += `Content Engagement,Bounce Rate,${data.contentEngagement.bounceRate},${timestamp}\n`;
     csvContent += `Content Engagement,Total Content,${data.contentEngagement.totalContent || 0},${timestamp}\n`;
+    csvContent += `Content Engagement,Quizzes Answered,${data.contentEngagement.quizzesAnswered ?? 0},${timestamp}\n`;
+    csvContent += `Content Engagement,Unique Users Who Answered Quiz,${data.contentEngagement.uniqueUsersWhoAnsweredQuiz ?? 0},${timestamp}\n`;
   }
   
   // User Behaviour

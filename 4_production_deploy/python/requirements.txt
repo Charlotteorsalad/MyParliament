@@ -1,0 +1,8 @@
+# For forum_content_moderation.py and sentiment_zeroshot.py (auto-started by Node backend)
+flask>=2.0
+transformers>=4.30
+torch>=2.0
+accelerate>=0.20
+sentencepiece>=0.1.99   # Required by XLM-RoBERTa tokenizer (slow tokenizer path)
+protobuf>=3.20          # Required by sentencepiece
+tqdm>=4.60              # Progress bars during model load

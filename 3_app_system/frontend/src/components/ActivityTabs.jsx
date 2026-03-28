@@ -55,7 +55,7 @@ function ActivityTabs({ discussions, replies, activities, bookmarkedEdu }) {
             onClick={() => setTab("discussions")}
           >
             <div className="flex flex-col items-center">
-              <span className="text-lg mb-1">💬</span>
+              <span className="text-lg mb-1"></span>
               <span className="hidden sm:inline text-xs">Discussions</span>
               <span className="sm:hidden text-xs">Disc</span>
             </div>
@@ -69,7 +69,7 @@ function ActivityTabs({ discussions, replies, activities, bookmarkedEdu }) {
             onClick={() => setTab("replies")}
           >
             <div className="flex flex-col items-center">
-              <span className="text-lg mb-1">💭</span>
+              <span className="text-lg mb-1"></span>
               <span className="text-xs">Replies</span>
             </div>
           </button>
@@ -82,7 +82,7 @@ function ActivityTabs({ discussions, replies, activities, bookmarkedEdu }) {
             onClick={() => setTab("activities")}
           >
             <div className="flex flex-col items-center">
-              <span className="text-lg mb-1">⚡</span>
+              <span className="text-lg mb-1"></span>
               <span className="hidden sm:inline text-xs">Activities</span>
               <span className="sm:hidden text-xs">Act</span>
             </div>
@@ -96,7 +96,7 @@ function ActivityTabs({ discussions, replies, activities, bookmarkedEdu }) {
             onClick={() => setTab("bookmarkedEdu")}
           >
             <div className="flex flex-col items-center">
-              <span className="text-lg mb-1">🔖</span>
+              <span className="text-lg mb-1"></span>
               <span className="hidden sm:inline text-xs">Bookmarks</span>
               <span className="sm:hidden text-xs">Book</span>
             </div>

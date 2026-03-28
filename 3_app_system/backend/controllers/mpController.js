@@ -38,3 +38,19 @@ exports.getDetail = async (req, res) => {
     res.status(500).json({ message: "Failed to get MP details", error: err.message });
   }
 };
+
+exports.getDetailByName = async (req, res) => {
+  try {
+    const name = req.query.name;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ message: 'Query parameter "name" is required' });
+    }
+    const mp = await mpService.getMPDetailByName(name.trim());
+    res.json({ data: mp });
+  } catch (err) {
+    if (err.message === 'MP not found') {
+      return res.status(404).json({ message: err.message });
+    }
+    res.status(500).json({ message: "Failed to get MP by name", error: err.message });
+  }
+};

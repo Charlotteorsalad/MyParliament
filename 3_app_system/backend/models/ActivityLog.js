@@ -31,7 +31,14 @@ const activityLogSchema = new mongoose.Schema({
       'mp_delete',
       'mp_status_update',
       'mp_bulk_update',
-      'mp_bulk_delete'
+      'mp_bulk_delete',
+      'edu_view',
+      'mp_view',
+      'issue_view',
+      'forum_view',
+      'quiz_submit',
+      'forum_reply',
+      'forum_topic_create'
     ]
   },
   description: {

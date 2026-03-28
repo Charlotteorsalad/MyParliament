@@ -10,12 +10,13 @@ const forumTopicSchema = new mongoose.Schema({
   description: {
     type: String,
     required: true,
-    maxlength: 1000
+    // Allow longer body text; UI will truncate to 200 chars for preview
+    maxlength: 3000
   },
   category: {
     type: String,
     required: true,
-    enum: ['policy', 'debate', 'general', 'announcement'],
+    trim: true,
     default: 'general'
   },
   author: {
@@ -29,7 +30,7 @@ const forumTopicSchema = new mongoose.Schema({
   }],
   status: {
     type: String,
-    enum: ['active', 'locked', 'archived', 'flagged'],
+    enum: ['active', 'archived', 'flagged'],
     default: 'active'
   },
   isPinned: {
@@ -39,6 +40,12 @@ const forumTopicSchema = new mongoose.Schema({
   isSticky: {
     type: Boolean,
     default: false
+  },
+  linkedTopic: {
+    type: String,
+    trim: true,
+    maxlength: 300,
+    default: ''
   },
   tags: [{
     type: String,
@@ -76,7 +83,20 @@ const forumTopicSchema = new mongoose.Schema({
       note: String,
       action: {
         type: String,
-        enum: ['reviewed', 'warned', 'locked', 'archived', 'approved']
+        enum: [
+          'reviewed',
+          'warned',
+          'archived',
+          'approved',
+          'approve',
+          'restrict',
+          'flag',
+          'mark_sensitive'
+        ]
+      },
+      notifyUser: {
+        type: Boolean,
+        default: false
       },
       createdAt: {
         type: Date,
@@ -93,7 +113,22 @@ const forumTopicSchema = new mongoose.Schema({
     }
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      ret.id = ret._id;
+      delete ret.__v;
+      return ret;
+    }
+  },
+  toObject: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      ret.id = ret._id;
+      return ret;
+    }
+  }
 });
 
 // Index for better query performance

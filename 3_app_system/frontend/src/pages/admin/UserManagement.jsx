@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAdminAuth } from '../../hooks/useAdminAuth.jsx';
 import { adminApi } from '../../api';
+import { useSSEEvent } from '../../contexts/SSEContext';
 
 const UserManagement = () => {
   const { admin } = useAdminAuth();
@@ -8,15 +9,17 @@ const UserManagement = () => {
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [sortBy, setSortBy] = useState('name-asc');
+  const [sortBy, setSortBy] = useState('');
   const [isApplyingFilter, setIsApplyingFilter] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [alertType, setAlertType] = useState('error'); // 'error', 'success', 'warning'
+  const [goToPageInput, setGoToPageInput] = useState('');
 
   // Helper function to show alerts
   const showAlertMessage = (message, type = 'error') => {
@@ -25,19 +28,22 @@ const UserManagement = () => {
     setShowAlert(true);
   };
 
-  // Check if current admin is superadmin
-  const isSuperAdmin = admin?.role === 'superadmin';
+  const hasManageUsers = admin?.role === 'superadmin' || (Array.isArray(admin?.permissions) && admin.permissions.includes('manage_users'));
+  const [sseKey, setSseKey] = useState(0);
+
+  // Real-time: when a new user registers, refresh the list automatically
+  useSSEEvent('user_registered', () => setSseKey((k) => k + 1));
 
   // Debounced search effect
   useEffect(() => {
-    if (isSuperAdmin) {
+    if (hasManageUsers) {
       const timeoutId = setTimeout(() => {
         fetchUsers();
       }, 300); // 300ms delay for search
       
       return () => clearTimeout(timeoutId);
     }
-  }, [isSuperAdmin, currentPage, searchTerm, filterStatus, sortBy]);
+  }, [hasManageUsers, currentPage, searchTerm, filterStatus, sortBy, sseKey]);
 
   const fetchUsers = async () => {
     try {
@@ -45,14 +51,21 @@ const UserManagement = () => {
       setIsApplyingFilter(true);
       
       // Convert sortBy to server format
-      let serverSortBy = 'createdAt';
-      let serverSortOrder = 'desc';
+      // Default to name ascending if no sortBy specified
+      let serverSortBy = 'name';
+      let serverSortOrder = 'asc';
       
       if (sortBy === 'name-asc') {
         serverSortBy = 'name';
         serverSortOrder = 'asc';
       } else if (sortBy === 'name-desc') {
         serverSortBy = 'name';
+        serverSortOrder = 'desc';
+      } else if (sortBy === 'status-asc') {
+        serverSortBy = 'status';
+        serverSortOrder = 'asc';
+      } else if (sortBy === 'status-desc') {
+        serverSortBy = 'status';
         serverSortOrder = 'desc';
       } else if (sortBy === 'activity-asc') {
         serverSortBy = 'activity';
@@ -62,11 +75,10 @@ const UserManagement = () => {
         serverSortOrder = 'desc';
       }
       
-      console.log('UserManagement API call:', { currentPage, serverSortBy, serverSortOrder, searchTerm, filterStatus });
       const response = await adminApi.getAllUsers(currentPage, 10, serverSortBy, serverSortOrder, searchTerm, filterStatus);
-      console.log('UserManagement API response:', response.data);
       setUsers(response.data.users);
       setTotalPages(response.data.pagination.pages);
+      setTotalCount(response.data.pagination.total ?? 0);
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
@@ -133,7 +145,7 @@ const UserManagement = () => {
   // Server-side filtering and sorting, so we use users directly
   const filteredUsers = users;
 
-  if (!isSuperAdmin) {
+  if (!hasManageUsers) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -146,11 +158,11 @@ const UserManagement = () => {
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full min-w-0 max-w-full overflow-x-hidden">
         {/* Search and Filters - First Row */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6 mt-0">
-          <div className="p-6">
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6 mt-0 min-w-0">
+          <div className="p-4 sm:p-6">
+             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
                 <div className="relative">
@@ -182,8 +194,8 @@ const UserManagement = () => {
                 >
                   <option value="all">All Status</option>
                   <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
                   <option value="suspended">Suspended</option>
+                  <option value="restricted">Restricted</option>
                 </select>
               </div>
               <div className="flex items-end">
@@ -196,10 +208,10 @@ const UserManagement = () => {
         </div>
 
 
-        {/* Users Table */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 transition-all duration-200 table-fixed">
+        {/* Users Table - table full width, scroll container when narrow */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-w-0">
+          <div className="overflow-x-auto min-w-0 w-full">
+            <table className="w-full min-w-[720px] divide-y divide-gray-200 transition-all duration-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th 
@@ -211,7 +223,15 @@ const UserManagement = () => {
                       {getSortIcon('name')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">Status</th>
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none w-1/6"
+                    onClick={() => handleSort('status')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Status</span>
+                      {getSortIcon('status')}
+                    </div>
+                  </th>
                   <th 
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none w-1/4"
                     onClick={() => handleSort('activity')}
@@ -221,7 +241,7 @@ const UserManagement = () => {
                       {getSortIcon('activity')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Actions</th>
+                  <th className="px-2 sm:px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{ minWidth: '7rem' }}>Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200" style={{ minHeight: '400px' }}>
@@ -248,37 +268,47 @@ const UserManagement = () => {
                           <div className="h-10 w-10 flex-shrink-0">
                             <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                               <span className="text-sm font-medium text-blue-600">
-                                {user.firstName?.charAt(0) || user.username?.charAt(0) || 'U'}
+                                {(user.profile?.firstName || user.profile?.lastName || user.username)?.charAt(0) || 'U'}
                               </span>
                             </div>
                           </div>
                           <div className="ml-4 min-w-0 flex-1">
                             <div className="text-sm font-medium text-gray-900 truncate">
-                              {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.username}
+                              {(user.profile?.firstName || user.profile?.lastName) ? [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ') : user.username}
                             </div>
                             <div className="text-sm text-gray-500 truncate">{user.email}</div>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap w-1/6">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          user.status === 'active' 
-                            ? 'bg-green-100 text-green-800' 
+                        <span
+                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            user.status === 'active'
+                              ? 'bg-green-100 text-green-800'
+                              : user.status === 'suspended'
+                              ? 'bg-red-100 text-red-800'
+                              : user.status === 'restricted'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {user.status === 'active'
+                            ? 'Active'
                             : user.status === 'suspended'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {user.status === 'active' ? 'Active' : user.status === 'suspended' ? 'Suspended' : 'Inactive'}
+                            ? 'Suspended'
+                            : user.status === 'restricted'
+                            ? 'Restricted'
+                            : (user.status || 'Active')}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 w-1/4">
                         {user.lastLogin ? new Date(user.lastLogin).toLocaleString() : 'Never'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium w-1/4">
-                        <div className="flex space-x-2">
+                      <td className="px-2 sm:px-4 py-2 whitespace-nowrap text-sm font-medium align-top" style={{ minWidth: '7rem' }}>
+                        <div className="flex flex-col items-center justify-center gap-0">
                           <button
                             onClick={() => openDetailModal(user)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="text-xs text-blue-600 hover:text-blue-900 py-0.5 block text-center"
                           >
                             View
                           </button>
@@ -292,91 +322,23 @@ const UserManagement = () => {
           </div>
 
           {/* Pagination */}
-          <div className="px-6 py-4 border-t border-gray-200">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-700">
-                Showing page {currentPage} of {totalPages} (Total items: {users.length})
+          <div className="px-4 sm:px-6 py-4 border-t border-gray-200 min-w-0">
+            <div className="flex flex-row items-center justify-between gap-3 flex-nowrap min-w-0">
+              <div className="text-sm text-gray-700 flex items-center gap-2 flex-shrink-0">
+                <span>Items:</span>
+                <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{users.length}</span>
+                <span>/</span>
+                <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{totalCount}</span>
+                <span className="ml-1 whitespace-nowrap">— Page {currentPage} of {totalPages}</span>
               </div>
-              <nav className="flex space-x-2">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Previous
-                </button>
-                {(() => {
-                  const maxVisiblePages = 5;
-                  const startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-                  const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-                  const pages = [];
-                  
-                  // Add first page and ellipsis if needed
-                  if (startPage > 1) {
-                    pages.push(
-                      <button
-                        key={1}
-                        onClick={() => setCurrentPage(1)}
-                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                      >
-                        1
-                      </button>
-                    );
-                    if (startPage > 2) {
-                      pages.push(
-                        <span key="ellipsis1" className="px-3 py-2 text-sm text-gray-500">
-                          ...
-                        </span>
-                      );
-                    }
-                  }
-                  
-                  // Add visible page numbers
-                  for (let i = startPage; i <= endPage; i++) {
-                    pages.push(
-                      <button
-                        key={i}
-                        onClick={() => setCurrentPage(i)}
-                        className={`px-3 py-2 text-sm font-medium border rounded-md ${
-                          i === currentPage
-                            ? 'bg-green-600 text-white border-green-600'
-                            : 'text-gray-500 bg-white border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {i}
-                      </button>
-                    );
-                  }
-                  
-                  // Add ellipsis and last page if needed
-                  if (endPage < totalPages) {
-                    if (endPage < totalPages - 1) {
-                      pages.push(
-                        <span key="ellipsis2" className="px-3 py-2 text-sm text-gray-500">
-                          ...
-                        </span>
-                      );
-                    }
-                    pages.push(
-                      <button
-                        key={totalPages}
-                        onClick={() => setCurrentPage(totalPages)}
-                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                      >
-                        {totalPages}
-                      </button>
-                    );
-                  }
-                  
-                  return pages;
-                })()}
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Next
-                </button>
+              <nav className="flex items-center gap-2 flex-nowrap flex-shrink-0">
+                <button onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+                {totalPages > 1 && (
+                  <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(goToPageInput, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { setCurrentPage(n); setGoToPageInput(''); } }}>
+                    <input type="number" min={1} max={totalPages} value={goToPageInput} onChange={(e) => setGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))} className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center" placeholder={currentPage} aria-label="Page number" />
+                  </form>
+                )}
+                <button onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
               </nav>
             </div>
           </div>
@@ -386,36 +348,36 @@ const UserManagement = () => {
              {/* Detail Modal */}
              {showDetailModal && selectedUser && (
                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-                 <div className="relative p-6 border w-[672px] max-w-[95vw] shadow-lg rounded-md bg-white">
-                   <div className="mt-3">
+                 <div className="relative p-4 sm:p-6 border w-full max-w-[672px] shadow-lg rounded-md bg-white min-w-0">
+                   <div className="mt-3 min-w-0">
                      <h3 className="text-lg font-medium text-gray-900 mb-4">User Overview</h3>
                      <div className="space-y-4">
                        <div className="flex items-center space-x-3">
                          <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center">
                            <span className="text-2xl font-bold text-blue-600">
-                             {selectedUser.firstName?.charAt(0) || selectedUser.username?.charAt(0) || 'U'}
+                             {(selectedUser.profile?.firstName || selectedUser.profile?.lastName || selectedUser.username)?.charAt(0) || 'U'}
                            </span>
                          </div>
                          <div>
                            <h4 className="text-xl font-semibold text-gray-900">
-                             {selectedUser.firstName && selectedUser.lastName
-                               ? `${selectedUser.firstName} ${selectedUser.lastName}`
-                               : selectedUser.username}
+                             {(selectedUser.profile?.firstName || selectedUser.profile?.lastName) ? [selectedUser.profile?.firstName, selectedUser.profile?.lastName].filter(Boolean).join(' ') : selectedUser.username}
                            </h4>
-                           <p className="text-gray-600">User ID: {selectedUser._id?.slice(-8) || 'Unknown'}</p>
+                           <p className="text-gray-600">Email: {selectedUser.email || '—'}</p>
                          </div>
                        </div>
 
                        <div>
                          <label className="block text-sm font-medium text-gray-700">Status</label>
                          <span className={`mt-1 inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                           selectedUser.status === 'active' 
-                             ? 'bg-green-100 text-green-800' 
+                           selectedUser.status === 'active'
+                             ? 'bg-green-100 text-green-800'
                              : selectedUser.status === 'suspended'
                              ? 'bg-red-100 text-red-800'
+                             : selectedUser.status === 'restricted'
+                             ? 'bg-yellow-100 text-yellow-800'
                              : 'bg-gray-100 text-gray-800'
                          }`}>
-                           {selectedUser.status === 'active' ? 'Active' : selectedUser.status === 'suspended' ? 'Suspended' : 'Inactive'}
+                           {selectedUser.status === 'active' ? 'Active' : selectedUser.status === 'suspended' ? 'Suspended' : selectedUser.status === 'restricted' ? 'Restricted' : (selectedUser.status || 'Active')}
                          </span>
                        </div>
 

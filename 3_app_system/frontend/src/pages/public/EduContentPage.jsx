@@ -1,15 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../../hooks";
 import { useAuth } from "../../hooks";
 import { usePin } from "../../contexts/PinContext";
 import { useLanguage } from "../../contexts/LanguageContext";
-import { eduApi, bookmarkApi } from "../../api";
+import { eduApi, bookmarkApi, userApi } from "../../api";
+import { useSSEEvent } from "../../contexts/SSEContext";
+
+const RESOURCES_PER_PAGE = 12;
 
 function EduContentPage() {
   const [resources, setResources] = useState([]);
+  const [meta, setMeta] = useState({ page: 1, limit: RESOURCES_PER_PAGE });
+  const [pageInputValue, setPageInputValue] = useState('1');
   const [bookmarkedResources, setBookmarkedResources] = useState(new Set());
-  const { executeApiCall, loading, error } = useApi();
+  const [viewedResourceIds, setViewedResourceIds] = useState(new Set());
+  const [quizCompletedResourceIds, setQuizCompletedResourceIds] = useState(new Set());
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const { executeApiCall, loading, error } = useApi();              // list fetch
+  const { executeApiCall: executeBookmarkCall } = useApi();         // bookmark ops (separate loading state)
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const { PinButton } = usePin();
@@ -20,28 +29,117 @@ function EduContentPage() {
     return image && image.data && image.contentType;
   };
 
+  const fetchResources = useCallback(async () => {
+    try {
+      const data = await executeApiCall(eduApi.getAll);
+      setResources(data);
+    } catch (err) {
+      console.error("Failed to fetch educational resources:", err);
+    }
+  }, [executeApiCall]);
+
   useEffect(() => {
-    const fetchResources = async () => {
+    fetchResources();
+  }, [fetchResources]);
+
+  // Real-time: refetch when admin creates/updates/publishes/archives/deletes edu content
+  useSSEEvent('edu_updated', fetchResources);
+
+  // Load bookmarks and viewed/quiz-completed state when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setBookmarkedResources(new Set());
+      setViewedResourceIds(new Set());
+      setQuizCompletedResourceIds(new Set());
+      return;
+    }
+    const loadBookmarks = async () => {
       try {
-        const data = await executeApiCall(eduApi.getAll);
-        setResources(data);
+        const data = await bookmarkApi.getBookmarks({ type: 'education', page: 1, limit: 1000 });
+        const ids = new Set(
+          (data.bookmarks || []).map((b) => {
+            const res = b.resourceId;
+            if (!res) return null;
+            if (typeof res === 'string') return res;
+            return String(res._id || res.id);
+          }).filter(Boolean)
+        );
+        setBookmarkedResources(ids);
       } catch (err) {
-        console.error("Failed to fetch educational resources:", err);
+        console.warn('[EduContentPage] Failed to load bookmarks:', err);
       }
     };
+    const loadEduActivity = async () => {
+      try {
+        const data = await userApi.getEduActivity();
+        setViewedResourceIds(new Set(data.viewedResourceIds || []));
+        setQuizCompletedResourceIds(new Set(data.quizCompletedResourceIds || []));
+      } catch (err) {
+        console.warn('[EduContentPage] Failed to load edu activity:', err);
+      }
+    };
+    loadBookmarks();
+    loadEduActivity();
+  }, [isAuthenticated]);
 
-    fetchResources();
-  }, [executeApiCall]);
+  const total = resources.length;
+  const totalPages = Math.max(1, Math.ceil(total / meta.limit));
+  const displayResources = resources.slice((meta.page - 1) * meta.limit, meta.page * meta.limit);
+
+  // Keep page in valid range when total changes
+  useEffect(() => {
+    if (total > 0 && meta.page > totalPages) {
+      setMeta((m) => ({ ...m, page: totalPages }));
+    }
+  }, [total, totalPages, meta.page]);
+
+  useEffect(() => {
+    setPageInputValue(meta.page.toString());
+  }, [meta.page]);
+
+  const changePage = (d) => {
+    if (loading) return;
+    setMeta((m) => ({ ...m, page: Math.max(1, Math.min(m.page + d, totalPages)) }));
+  };
+  const goToPage = (page) => {
+    if (loading) return;
+    const valid = Math.max(1, Math.min(Number(page), totalPages));
+    setMeta((m) => ({ ...m, page: valid }));
+  };
+  const goToFirstPage = () => goToPage(1);
+  const goToLastPage = () => goToPage(totalPages);
+  const handlePageInputChange = (e) => setPageInputValue(e.target.value);
+  const handlePageInputKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      const p = parseInt(pageInputValue, 10);
+      if (!isNaN(p) && p > 0) goToPage(p);
+      else setPageInputValue(meta.page.toString());
+    }
+  };
+  const handlePageInputBlur = () => {
+    const p = parseInt(pageInputValue, 10);
+    if (isNaN(p) || p < 1) setPageInputValue(meta.page.toString());
+    else goToPage(p);
+  };
+
+  // Lock body scroll when login modal is open
+  useEffect(() => {
+    if (showLoginModal) {
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showLoginModal]);
 
   const handleBookmark = async (resourceId) => {
     if (!isAuthenticated) {
-      // Show login modal or redirect to login
-      navigate('/login');
+      setShowLoginModal(true);
       return;
     }
 
     try {
-      const result = await executeApiCall(() => 
+      const result = await executeBookmarkCall(() => 
         bookmarkApi.toggleBookmark({
           resourceId,
           type: 'education',
@@ -65,8 +163,19 @@ function EduContentPage() {
   };
 
   const handleResourceClick = (resource) => {
-    // Navigate to detailed resource view
-    navigate(`/edu/${resource._id}`);
+    // Increment view count on server (fire-and-forget)
+    eduApi.incrementView(resource._id).catch(() => {});
+    // Update local state so count is correct when user returns to list
+    setResources((prev) =>
+      prev.map((r) =>
+        r._id === resource._id ? { ...r, views: (r.views || 0) + 1 } : r
+      )
+    );
+    navigate(`/edu/${resource._id}`, {
+      state: {
+        isBookmarked: bookmarkedResources.has(resource._id),
+      },
+    });
   };
 
   // Calculate statistics
@@ -75,8 +184,9 @@ function EduContentPage() {
   const totalViews = resources.reduce((sum, resource) => sum + (resource.views || 0), 0);
 
   return (
-    <div className="w-full bg-gradient-to-br from-slate-50 to-blue-50 min-h-screen">
-      <div className="p-4 sm:p-6 lg:p-8 xl:p-10 w-full">
+    <>
+    <div className="w-full max-w-full min-w-0 bg-gradient-to-br from-slate-50 to-blue-50 min-h-screen">
+      <div className="p-4 sm:p-6 lg:p-8 xl:p-10 w-full max-w-full min-w-0">
         {/* Header Section */}
         <div className="mb-8">
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 mb-4">
@@ -179,7 +289,7 @@ function EduContentPage() {
           {/* Resources Grid */}
           {!loading && !error && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {resources.map((resource) => (
+            {displayResources.map((resource) => (
               <div
                 key={resource._id}
                 className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer group"
@@ -275,6 +385,27 @@ function EduContentPage() {
                           {t('quiz')}
                         </span>
                       )}
+
+                      {/* Viewed badge (only when user has viewed this resource) */}
+                      {isAuthenticated && viewedResourceIds.has(String(resource._id)) && (
+                        <span className="flex items-center text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full text-xs font-medium">
+                          <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          {t('viewed')}
+                        </span>
+                      )}
+
+                      {/* Quiz completed / Answered badge */}
+                      {isAuthenticated && quizCompletedResourceIds.has(String(resource._id)) && (
+                        <span className="flex items-center text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md text-xs font-medium whitespace-nowrap">
+                          <svg className="w-3.5 h-3.5 mr-1.5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          {t('answered')}
+                        </span>
+                      )}
                       
                       {/* Attachments Indicator */}
                       {resource.attachments && resource.attachments.length > 0 && (
@@ -301,6 +432,48 @@ function EduContentPage() {
             </div>
           )}
 
+          {/* Pagination */}
+          {!loading && !error && total > 0 && (
+          <div className="mt-8 bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="text-sm text-gray-600">
+                {t('showing')} {((meta.page - 1) * meta.limit) + 1} {t('to')} {Math.min(meta.page * meta.limit, total)} {t('of')} {total} {t('resourcesCount')}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={meta.page <= 1 || loading}
+                  onClick={() => changePage(-1)}
+                  className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {t('previous')}
+                </button>
+                <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(pageInputValue, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { goToPage(n); setPageInputValue(''); } }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={pageInputValue}
+                    onChange={handlePageInputChange}
+                    onKeyDown={(e) => e.key === 'Enter' && handlePageInputKeyPress(e)}
+                    onBlur={handlePageInputBlur}
+                    disabled={loading}
+                    className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center disabled:bg-gray-100 disabled:cursor-not-allowed focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder={meta.page}
+                    aria-label="Page number"
+                  />
+                </form>
+                <button
+                  disabled={meta.page * meta.limit >= total || loading}
+                  onClick={() => changePage(1)}
+                  className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {t('next')}
+                </button>
+              </div>
+            </div>
+          </div>
+          )}
+
           {/* Empty State */}
           {!loading && !error && resources.length === 0 && (
           <div className="text-center py-12">
@@ -316,20 +489,39 @@ function EduContentPage() {
             </div>
           )}
 
-        {/* Call to Action */}
-        <div className="mt-12 text-center">
-          <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">{t('enhanceCivicKnowledge')}</h3>
-            <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
-              {t('bookmarkResourcesDescription')}
-            </p>
-            <button className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors">
-              {t('exploreAllResources')}
+      </div>
+    </div>
+
+    {/* Login required modal — sibling of main container, high z-index */}
+    {showLoginModal && (
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLoginModal(false); }}
+      >
+        <div className="w-full max-w-[600px] bg-white rounded-xl shadow-xl p-6" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+          <p className="text-gray-700 text-base mb-6">
+            {t('loginRequiredForBookmark')}
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLoginModal(false); }}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium"
+            >
+              {t('cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLoginModal(false); navigate('/login'); }}
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium"
+            >
+              {t('login')}
             </button>
           </div>
         </div>
       </div>
-    </div>
+    )}
+    </>
   );
 }
 

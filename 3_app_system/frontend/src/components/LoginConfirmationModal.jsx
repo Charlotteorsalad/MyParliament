@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const LoginConfirmationModal = ({ isOpen, onClose, action = 'perform this action' }) => {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   // Close modal on escape key
   useEffect(() => {
@@ -50,11 +52,11 @@ const LoginConfirmationModal = ({ isOpen, onClose, action = 'perform this action
           </div>
           
           {/* Title */}
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Login Required</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('loginRequired')}</h3>
           
           {/* Message */}
           <p className="text-gray-600 mb-6">
-            You need to be logged in to {action}. Would you like to proceed to the login page?
+            {t('loginRequiredPrefix')}{action}{t('loginRequiredSuffix')}
           </p>
           
           {/* Buttons */}
@@ -63,13 +65,13 @@ const LoginConfirmationModal = ({ isOpen, onClose, action = 'perform this action
               onClick={onClose}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
             >
-              Cancel
+              {t('cancel')}
             </button>
             <button
               onClick={handleConfirm}
               className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
             >
-              Login
+              {t('login')}
             </button>
           </div>
         </div>

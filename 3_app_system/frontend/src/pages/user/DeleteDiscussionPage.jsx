@@ -32,7 +32,6 @@ export default function DeleteDiscussionPage() {
         // Simulate API call
         setTimeout(() => {
             // In real app, this would make an API call to delete the discussion
-            console.log('Discussion deleted:', discussionId);
             setIsDeleting(false);
             navigate('/forum?tab=created');
         }, 1500);

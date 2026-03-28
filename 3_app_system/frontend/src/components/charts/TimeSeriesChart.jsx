@@ -73,7 +73,6 @@ const TimeSeriesChart = ({
         <div className="flex items-center justify-center h-64 text-gray-500">
           <div className="text-center">
             <div className="text-4xl mb-4">
-              {hasNoMetrics ? '🎯' : hasInsufficientData ? '⏳' : '📊'}
             </div>
             {hasNoMetrics ? (
               <div>
@@ -391,10 +390,10 @@ const TimeSeriesChart = ({
         <div className="flex justify-between items-start mb-3">
           <h4 className="text-sm font-semibold text-gray-700">Performance Summary ({selectedTimeRange})</h4>
           <div className="text-xs text-gray-500">
-            {['7d', '30d'].includes(selectedTimeRange) && '📊 Daily Averages'}
-            {['6m', '1y'].includes(selectedTimeRange) && '📊 Monthly Averages'}
-            {['3y'].includes(selectedTimeRange) && '📊 Yearly Averages'}
-            {['1h', '6h', '24h'].includes(selectedTimeRange) && '📊 Real-time Data'}
+            {['7d', '30d'].includes(selectedTimeRange) && 'Daily Averages'}
+            {['6m', '1y'].includes(selectedTimeRange) && 'Monthly Averages'}
+            {['3y'].includes(selectedTimeRange) && 'Yearly Averages'}
+            {['1h', '6h', '24h'].includes(selectedTimeRange) && 'Real-time Data'}
             {timeSeriesData.length > 0 && ` • ${timeSeriesData.length} data points`}
           </div>
         </div>

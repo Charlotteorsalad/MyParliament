@@ -1,11 +1,29 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks';
-import { userApi } from '../api';
+import { userApi, topicApi, bookmarkApi } from '../api';
+import { useLanguage } from '../contexts/LanguageContext';
 
-const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
+// Prefetch cache for topic detail – hover in Followed Topics modal populates this
+const topicDetailCache = new Map();
+
+const FollowerListModal = ({ isOpen, onClose, type, title, items = [], onItemRemoved }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredItems, setFilteredItems] = useState(items);
+  const navigate = useNavigate();
   const { executeApiCall } = useApi();
+  const { t } = useLanguage();
+
+  const prefetchTopicDetail = (topicId) => {
+    const id = String(topicId);
+    if (!id || topicDetailCache.has(id)) return;
+    topicApi.getIssueById(id)
+      .then((res) => {
+        const issue = res?.data?.issue;
+        if (issue) topicDetailCache.set(id, issue);
+      })
+      .catch(() => {});
+  };
 
   // Filter items based on search term
   useEffect(() => {
@@ -23,7 +41,8 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
   }, [searchTerm, items]);
 
   // Handle unfollow/unbookmark action
-  const handleUnfollow = async (itemId) => {
+  const handleUnfollow = async (item) => {
+    const itemId = item.id || item._id;
     try {
       if (type === 'mps') {
         await executeApiCall(() => userApi.unfollowMP(itemId));
@@ -31,11 +50,16 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
         await executeApiCall(() => userApi.unfollowTopic(itemId));
       } else if (type === 'eduContent') {
         await executeApiCall(() => userApi.unbookmarkEduContent(itemId));
-      } else if (type === 'issues') {
-        await executeApiCall(() => userApi.unbookmarkIssue(itemId));
+      } else if (type === 'discussions') {
+        await executeApiCall(() => bookmarkApi.toggleBookmark({
+          resourceId: itemId,
+          type: 'forum',
+          title: item.title || 'Discussion',
+          description: item.description || '',
+        }));
       }
-      // Remove item from local state
-      setFilteredItems(prev => prev.filter(item => item.id !== itemId));
+      setFilteredItems(prev => prev.filter((i) => (i.id || i._id) !== itemId));
+      if (onItemRemoved) onItemRemoved(type, item);
     } catch (error) {
       console.error('Failed to unfollow/unbookmark:', error);
     }
@@ -53,7 +77,7 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
       
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative w-[95%] max-w-md sm:max-w-lg transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+        <div className="relative w-[95%] max-w-[900px] transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
           {/* Header */}
           <div className="border-b border-gray-200 px-6 py-4">
             <div className="flex items-center justify-between">
@@ -82,6 +106,7 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
                     type === 'mps' ? 'MPs' : 
                     type === 'topics' ? 'topics' :
                     type === 'eduContent' ? 'educational content' :
+                    type === 'discussions' ? 'discussions' :
                     type === 'issues' ? 'issues' : 'items'
                   }...`}
                   value={searchTerm}
@@ -99,19 +124,37 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
                 <svg className="h-12 w-12 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
-                <p className="text-sm">
-                  {searchTerm ? 'No results found' : `No ${
-                    type === 'mps' ? 'MPs' : 
-                    type === 'topics' ? 'topics' :
-                    type === 'eduContent' ? 'educational content' :
-                    type === 'issues' ? 'issues' : 'items'
-                  } ${type === 'mps' || type === 'topics' ? 'followed' : 'bookmarked'} yet`}
-                </p>
+                <p className="text-sm font-medium">{t('noData')}</p>
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
                 {filteredItems.map((item, index) => (
-                  <div key={item.id || index} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors gap-3">
+                  <div
+                    key={item.id || index}
+                    role={type === 'topics' ? 'button' : undefined}
+                    tabIndex={type === 'topics' ? 0 : undefined}
+                    onMouseEnter={type === 'topics' ? () => prefetchTopicDetail(item.id || item._id) : undefined}
+                    onClick={type === 'topics' ? () => {
+                      const topicId = item.id || item._id;
+                      if (topicId) {
+                        onClose();
+                        const cached = topicDetailCache.get(String(topicId));
+                        navigate(`/topic/${topicId}`, cached ? { state: { prefetchedIssue: cached } } : {});
+                      }
+                    } : undefined}
+                    onKeyDown={type === 'topics' ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        const topicId = item.id || item._id;
+                        if (topicId) {
+                          onClose();
+                          const cached = topicDetailCache.get(String(topicId));
+                          navigate(`/topic/${topicId}`, cached ? { state: { prefetchedIssue: cached } } : {});
+                        }
+                      }
+                    } : undefined}
+                    className={`flex items-center justify-between p-4 hover:bg-gray-50 transition-colors gap-3 ${type === 'topics' ? 'cursor-pointer' : ''}`}
+                  >
                     <div className="flex items-center space-x-3 min-w-0 flex-1">
                       {/* Avatar */}
                       <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
@@ -166,13 +209,38 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
                       </div>
                     </div>
                     
-                    {/* Unfollow/Unbookmark Button */}
-                    <button
-                      onClick={() => handleUnfollow(item.id)}
-                      className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors flex-shrink-0"
-                    >
-                      {type === 'mps' || type === 'topics' ? 'Unfollow' : 'Remove'}
-                    </button>
+                    {/* View (MPs only) + Unfollow/Unbookmark Buttons */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {type === 'mps' && (item.mp_id || item._id || item.name) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onClose();
+                            const mpId = item.mp_id || item._id;
+                            const name = item.name;
+                            if (mpId) {
+                              navigate(`/mps?mp=${encodeURIComponent(mpId)}&returnTo=/profile`);
+                            } else if (name) {
+                              navigate(`/mps?name=${encodeURIComponent(name)}&returnTo=/profile`);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-full hover:bg-indigo-100 transition-colors"
+                        >
+                          View
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnfollow(item);
+                        }}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
+                      >
+                        {type === 'mps' || type === 'topics' ? 'Unfollow' : 'Remove'}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -186,6 +254,7 @@ const FollowerListModal = ({ isOpen, onClose, type, title, items = [] }) => {
                 type === 'mps' ? 'MPs' : 
                 type === 'topics' ? 'topics' :
                 type === 'eduContent' ? 'educational content' :
+                type === 'discussions' ? 'discussions' :
                 type === 'issues' ? 'issues' : 'items'
               } {type === 'mps' || type === 'topics' ? 'followed' : 'bookmarked'}
             </p>

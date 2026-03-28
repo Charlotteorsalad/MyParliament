@@ -6,6 +6,16 @@ const forumModerationApi = {
     return api.get('/admin/forum-moderation/topics', { params });
   },
 
+  // Get all forum posts with filters
+  getPosts: (params = {}) => {
+    return api.get('/admin/forum-moderation/posts', { params });
+  },
+
+  // Get pending content (awaiting approval)
+  getPendingContent: (params = {}) => {
+    return api.get('/admin/forum-moderation/pending-content', { params });
+  },
+
   // Get flagged content
   getFlaggedContent: (type = 'both') => {
     return api.get('/admin/forum-moderation/flagged-content', { 
@@ -41,6 +51,22 @@ const forumModerationApi = {
   // Get moderation statistics
   getStats: () => {
     return api.get('/admin/forum-moderation/stats');
+  },
+
+  // Get user escalation reports (posts/topics reported by users)
+  getUserEscalations: (params = {}) => {
+    return api.get('/admin/forum-moderation/user-escalations', { params });
+  },
+
+  // Admin notifications (auto-flagged content)
+  getNotifications: (params = {}) => {
+    return api.get('/admin/forum-moderation/notifications', { params });
+  },
+  markNotificationRead: (notificationId) => {
+    return api.patch(`/admin/forum-moderation/notifications/${notificationId}/read`);
+  },
+  markAllNotificationsRead: () => {
+    return api.patch('/admin/forum-moderation/notifications/read-all');
   }
 };
 

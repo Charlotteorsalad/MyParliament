@@ -49,6 +49,18 @@ export const forumApi = {
     return response.data;
   },
 
+  // Report a post/reply as offensive
+  reportPost: async (postId, reason) => {
+    const response = await api.post(`/forum/posts/${postId}/report`, { reason });
+    return response.data;
+  },
+
+  // Report a topic (original discussion) as offensive
+  reportTopic: async (topicId, reason) => {
+    const response = await api.post(`/forum/topics/${topicId}/report`, { reason });
+    return response.data;
+  },
+
   // Like/unlike a post
   togglePostLike: async (postId) => {
     const response = await api.post(`/forum/posts/${postId}/like`);

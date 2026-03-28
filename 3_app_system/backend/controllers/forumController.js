@@ -1,9 +1,25 @@
 const forumService = require('../services/forumService');
+const User = require('../models/User');
+const ActivityLog = require('../models/ActivityLog');
+const { broadcast } = require('../services/sseService');
+
+// Check if user is restricted from forum create/reply (restriction = forum-only: no new topics, no new posts/replies)
+const checkForumRestriction = async (req, res) => {
+  const user = await User.findById(req.user.id).select('isRestricted restrictionEndDate restrictionReason');
+  if (!user) return null;
+  if (!user.isRestricted || !user.restrictionEndDate) return null;
+  if (new Date(user.restrictionEndDate) <= new Date()) return null; // restriction expired
+  const message = user.restrictionReason
+    ? `You are restricted from creating or replying in the forum until ${new Date(user.restrictionEndDate).toLocaleDateString()}. Reason: ${user.restrictionReason}`
+    : `You are restricted from creating or replying in the forum until ${new Date(user.restrictionEndDate).toLocaleDateString()}.`;
+  res.status(403).json({ message });
+  return true;
+};
 
 // Get all forum topics
 exports.getAllTopics = async (req, res) => {
   try {
-    const result = await forumService.getAllTopics(req.query);
+    const result = await forumService.getAllTopics(req.query, req.user?.id);
     res.json(result);
   } catch (error) {
     console.error('Error in getAllTopics:', error);
@@ -17,7 +33,7 @@ exports.getAllTopics = async (req, res) => {
 // Get single topic with posts
 exports.getTopicById = async (req, res) => {
   try {
-    const topic = await forumService.getTopicById(req.params.id);
+    const topic = await forumService.getTopicById(req.params.id, req.user?.id);
     res.json(topic);
   } catch (error) {
     console.error('Error in getTopicById:', error);
@@ -34,13 +50,29 @@ exports.getTopicById = async (req, res) => {
 // Create new topic
 exports.createTopic = async (req, res) => {
   try {
+    console.log('[createTopic] Called, user:', req.user?.id, 'data:', req.body);
+    const restricted = await checkForumRestriction(req, res);
+    if (restricted) {
+      console.log('[createTopic] User is restricted');
+      return;
+    }
+    console.log('[createTopic] Creating topic...');
     const topic = await forumService.createTopic(req.body, req.user.id);
+    console.log('[createTopic] Topic created successfully:', topic._id);
+    // Log activity (fire-and-forget)
+    ActivityLog.create({
+      userId: req.user.id,
+      action: 'forum_topic_create',
+      description: `Created discussion "${topic.title}"`,
+      metadata: { topicId: String(topic._id), topicTitle: topic.title },
+    }).catch(() => {});
+    broadcast('forum_activity', { type: 'new_topic', id: String(topic._id) });
     res.status(201).json({
       message: 'Topic created successfully',
       topic
     });
   } catch (error) {
-    console.error('Error in createTopic:', error);
+    console.error('[createTopic] ERROR:', error);
     res.status(500).json({ 
       message: "Failed to create topic", 
       error: error.message 
@@ -94,7 +126,17 @@ exports.deleteTopic = async (req, res) => {
 // Create new post in topic
 exports.createPost = async (req, res) => {
   try {
+    const restricted = await checkForumRestriction(req, res);
+    if (restricted) return;
     const post = await forumService.createPost(req.params.topicId, req.body, req.user.id);
+    // Log activity (fire-and-forget)
+    ActivityLog.create({
+      userId: req.user.id,
+      action: 'forum_reply',
+      description: `Replied to a forum discussion`,
+      metadata: { topicId: String(req.params.topicId), postId: String(post._id) },
+    }).catch(() => {});
+    broadcast('forum_activity', { type: 'new_post', topicId: String(req.params.topicId), id: String(post._id) });
     res.status(201).json({
       message: 'Post created successfully',
       post
@@ -117,6 +159,8 @@ exports.createPost = async (req, res) => {
 // Reply to a post
 exports.replyToPost = async (req, res) => {
   try {
+    const restricted = await checkForumRestriction(req, res);
+    if (restricted) return;
     const reply = await forumService.replyToPost(req.params.postId, req.body, req.user.id);
     res.status(201).json({
       message: 'Reply created successfully',
@@ -137,7 +181,7 @@ exports.replyToPost = async (req, res) => {
 // Get posts for a topic
 exports.getTopicPosts = async (req, res) => {
   try {
-    const result = await forumService.getTopicPosts(req.params.topicId, req.query);
+    const result = await forumService.getTopicPosts(req.params.topicId, req.query, req.user?.id);
     res.json(result);
   } catch (error) {
     console.error('Error in getTopicPosts:', error);
@@ -164,6 +208,56 @@ exports.togglePostLike = async (req, res) => {
     res.status(500).json({ 
       message: "Failed to toggle post like", 
       error: error.message 
+    });
+  }
+};
+
+// Report a post/reply as offensive (user escalation)
+exports.reportPost = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { reason } = req.body || {};
+
+    const post = await forumService.reportPost(postId, req.user.id, reason);
+
+    broadcast('forum_activity', { type: 'report_post', id: String(postId) });
+    res.status(201).json({
+      message: 'Post reported successfully',
+      post
+    });
+  } catch (error) {
+    console.error('Error in reportPost:', error);
+    if (error.message === 'Post not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({
+      message: 'Failed to report post',
+      error: error.message
+    });
+  }
+};
+
+// Report a topic (original discussion) as offensive (user escalation)
+exports.reportTopic = async (req, res) => {
+  try {
+    const { topicId } = req.params;
+    const { reason } = req.body || {};
+
+    const topic = await forumService.reportTopic(topicId, req.user.id, reason);
+
+    broadcast('forum_activity', { type: 'report_topic', id: String(topicId) });
+    res.status(201).json({
+      message: 'Topic reported successfully',
+      topic
+    });
+  } catch (error) {
+    console.error('Error in reportTopic:', error);
+    if (error.message === 'Topic not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({
+      message: 'Failed to report topic',
+      error: error.message
     });
   }
 };

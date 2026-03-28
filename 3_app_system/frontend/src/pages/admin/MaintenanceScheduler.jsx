@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { DatePickerField } from '../../components/ui';
 
 const MaintenanceScheduler = () => {
   const [maintenanceTasks, setMaintenanceTasks] = useState([]);
@@ -17,91 +18,6 @@ const MaintenanceScheduler = () => {
     assignedTo: '',
     notes: ''
   });
-
-  // Sample maintenance data
-  useEffect(() => {
-    const sampleTasks = [
-      {
-        id: 'MAINT-001',
-        title: 'Database optimization and cleanup',
-        description: 'Perform routine database maintenance including index optimization, cleanup of old logs, and performance tuning.',
-        type: 'Routine Maintenance',
-        priority: 'medium',
-        status: 'scheduled',
-        scheduledDate: '2024-01-20T02:00:00Z',
-        estimatedDuration: '2 hours',
-        assignedTo: 'Database Admin',
-        createdAt: '2024-01-15T09:00:00Z',
-        notes: 'This is a routine monthly maintenance task. Ensure all users are notified 24 hours in advance.',
-        dependencies: ['Backup completion', 'User notification'],
-        impact: 'Low - Minimal user impact expected'
-      },
-      {
-        id: 'MAINT-002',
-        title: 'Security patch deployment',
-        description: 'Deploy latest security patches and update system dependencies to address critical vulnerabilities.',
-        type: 'Security Update',
-        priority: 'high',
-        status: 'completed',
-        scheduledDate: '2024-01-10T01:00:00Z',
-        completedDate: '2024-01-10T03:30:00Z',
-        estimatedDuration: '2.5 hours',
-        actualDuration: '2.5 hours',
-        assignedTo: 'Security Team',
-        createdAt: '2024-01-08T14:00:00Z',
-        notes: 'Successfully deployed all security patches. No issues encountered.',
-        dependencies: ['Security team approval', 'Testing environment validation'],
-        impact: 'Medium - Brief service interruption during deployment'
-      },
-      {
-        id: 'MAINT-003',
-        title: 'Server hardware upgrade',
-        description: 'Upgrade server hardware components including RAM and storage to improve performance and reliability.',
-        type: 'Hardware Upgrade',
-        priority: 'high',
-        status: 'in-progress',
-        scheduledDate: '2024-01-18T00:00:00Z',
-        estimatedDuration: '4 hours',
-        assignedTo: 'Infrastructure Team',
-        createdAt: '2024-01-12T10:00:00Z',
-        notes: 'Hardware components have been ordered and are expected to arrive by Jan 17th.',
-        dependencies: ['Hardware delivery', 'Data center access approval'],
-        impact: 'High - Extended downtime expected'
-      },
-      {
-        id: 'MAINT-004',
-        title: 'Application version update',
-        description: 'Update application to latest version with new features and bug fixes.',
-        type: 'Application Update',
-        priority: 'medium',
-        status: 'scheduled',
-        scheduledDate: '2024-01-25T01:00:00Z',
-        estimatedDuration: '1.5 hours',
-        assignedTo: 'Development Team',
-        createdAt: '2024-01-16T11:00:00Z',
-        notes: 'New version includes improved performance and new user interface enhancements.',
-        dependencies: ['QA testing completion', 'Staging environment validation'],
-        impact: 'Low - Rolling update with minimal downtime'
-      },
-      {
-        id: 'MAINT-005',
-        title: 'Backup system verification',
-        description: 'Verify backup system integrity and test disaster recovery procedures.',
-        type: 'Backup Verification',
-        priority: 'low',
-        status: 'pending',
-        scheduledDate: '2024-01-22T03:00:00Z',
-        estimatedDuration: '1 hour',
-        assignedTo: 'System Admin',
-        createdAt: '2024-01-17T14:00:00Z',
-        notes: 'Quarterly backup verification to ensure data integrity and recovery procedures.',
-        dependencies: ['Backup system access', 'Test environment setup'],
-        impact: 'None - No user impact'
-      }
-    ];
-
-    setMaintenanceTasks(sampleTasks);
-  }, []);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -333,13 +249,26 @@ const MaintenanceScheduler = () => {
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Scheduled Date</label>
+              <div className="flex gap-2 items-end">
+                <div className="flex-1 min-w-0">
+                  <DatePickerField
+                    label="Scheduled Date"
+                    value={newTask.scheduledDate ? new Date(newTask.scheduledDate) : null}
+                    onChange={(d) => setNewTask({
+                      ...newTask,
+                      scheduledDate: d ? d.toISOString().slice(0, 10) + 'T' + (newTask.scheduledDate ? newTask.scheduledDate.slice(11, 16) : '00:00') : ''
+                    })}
+                    placeholder="DD/MM/YYYY"
+                  />
+                </div>
                 <input
-                  type="datetime-local"
-                  value={newTask.scheduledDate}
-                  onChange={(e) => setNewTask({...newTask, scheduledDate: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  type="time"
+                  value={newTask.scheduledDate ? newTask.scheduledDate.slice(11, 16) : ''}
+                  onChange={(e) => setNewTask({
+                    ...newTask,
+                    scheduledDate: (newTask.scheduledDate ? newTask.scheduledDate.slice(0, 10) : new Date().toISOString().slice(0, 10)) + 'T' + e.target.value
+                  })}
+                  className="flex-shrink-0 w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
               
@@ -616,9 +545,21 @@ const MaintenanceScheduler = () => {
 
       {/* Maintenance Tasks List */}
       <div className="space-y-4">
-        {filteredTasks.map((task) => (
-          <MaintenanceCard key={task.id} task={task} />
-        ))}
+        {filteredTasks.length > 0 ? (
+          filteredTasks.map((task) => (
+            <MaintenanceCard key={task.id} task={task} />
+          ))
+        ) : (
+          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p className="text-gray-600 font-medium text-lg mb-2">No data available</p>
+            <p className="text-gray-500 text-sm">No maintenance task data available</p>
+          </div>
+        )}
       </div>
 
       {/* Modals */}

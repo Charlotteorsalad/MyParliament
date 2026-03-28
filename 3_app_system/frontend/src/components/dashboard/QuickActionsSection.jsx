@@ -38,6 +38,35 @@ const QuickActionsSection = ({
     }
   ];
 
+  // Map tab ID to translation key for label (so pin card title follows current language)
+  const getTabLabelKey = (tabId) => {
+    const keyMap = {
+      'mp-dashboard': 'mpDashboard',
+      'mp-featured': 'featuredMPs',
+      'mp-all': 'allMPs',
+      'edu-content': 'educationalContent',
+      'forum-discussions': 'discussionForum',
+      'forum-created': 'createdForum',
+      'forum-notifications': 'notifications',
+      'reports-overview': 'reports',
+      'reports-my': 'reports',
+      'nav-issues': 'issuePortal',
+      'nav-mps': 'mpDashboard',
+      'nav-edu': 'educationalContent',
+      'nav-forum': 'forum',
+      'nav-reports': 'reports',
+      'nav-feedback': 'feedback'
+    };
+    return keyMap[tabId] || null;
+  };
+
+  const getModuleLabel = (module) => {
+    if (!module) return '';
+    if (module === 'Navigation') return t('navigation');
+    if (module === 'Discussion Forum') return t('discussionForum');
+    return module;
+  };
+
   // Helper functions for pinned items
   const getTabIcon = (tabId) => {
     const iconMap = {
@@ -63,22 +92,22 @@ const QuickActionsSection = ({
   const getTabDescription = (tabId) => {
     const descriptions = {
       'mp-dashboard': t('exploreMembersOfParliament'),
-      'mp-featured': 'Top 10 most active MPs',
-      'mp-all': 'Complete directory of all MPs',
+      'mp-featured': t('top10ActiveMPs'),
+      'mp-all': t('completeDirectoryMPs'),
       'edu-content': t('learnAboutParliamentaryProcesses'),
       'forum-discussions': t('joinPoliticalDiscussions'),
-      'forum-created': 'Your created discussions',
-      'forum-notifications': 'Forum notifications',
-      'reports-overview': 'Analytics and insights overview',
-      'reports-my': 'Your personal reports',
-      'nav-issues': 'Issue Portal - Submit and track issues',
+      'forum-created': t('yourCreatedDiscussionsLabel'),
+      'forum-notifications': t('forumNotificationsLabel'),
+      'reports-overview': t('analyticsInsightsOverview'),
+      'reports-my': t('yourPersonalReports'),
+      'nav-issues': t('issuePortalSubmitTrack'),
       'nav-mps': t('mpDashboard') + ' - ' + t('exploreMembersOfParliament'),
-      'nav-edu': t('educationalContent') + ' - Learn about governance',
+      'nav-edu': t('educationalContent') + ' - ' + t('learnAboutGovernance'),
       'nav-forum': t('discussionForum') + ' - ' + t('joinPoliticalDiscussions'),
-      'nav-reports': 'Reports - Analytics and insights',
-      'nav-feedback': 'Feedback - Share your thoughts'
+      'nav-reports': t('reportsAnalyticsInsights'),
+      'nav-feedback': t('feedbackShareThoughts')
     };
-    return descriptions[tabId] || 'Quick access to this feature';
+    return descriptions[tabId] || t('quickAccessToFeature');
   };
 
   const handleTabClick = (tab) => {
@@ -138,8 +167,8 @@ const QuickActionsSection = ({
                     </div>
                     <div className="ml-4">
                       <h3 className="font-semibold text-gray-900 group-hover:text-indigo-700 transition-colors">
-                        {tab.name}
-                        {tab.module && <span className="text-xs text-gray-500 ml-2">({tab.module})</span>}
+                        {getTabLabelKey(tab.id) ? t(getTabLabelKey(tab.id)) : tab.name}
+                        {tab.module && <span className="text-xs text-gray-500 ml-2">({getModuleLabel(tab.module)})</span>}
                       </h3>
                       <p className="text-sm text-gray-600">{getTabDescription(tab.id)}</p>
                     </div>

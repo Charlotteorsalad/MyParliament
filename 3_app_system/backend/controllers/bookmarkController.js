@@ -1,6 +1,7 @@
 const Bookmark = require('../models/Bookmark');
-const EduResource = require('../models/EduResource');
+const { EduResource } = require('../models/EduResource');
 const Topic = require('../models/Topic');
+const ActivityLog = require('../models/ActivityLog');
 const asyncHandler = require('../middleware/asyncHandler');
 
 // Get user's bookmarks
@@ -149,6 +150,18 @@ const toggleBookmark = asyncHandler(async (req, res) => {
   if (existingBookmark) {
     // Remove bookmark
     await Bookmark.findByIdAndDelete(existingBookmark._id);
+
+    // Fire-and-forget activity log for bookmark removal
+    ActivityLog.create({
+      userId,
+      action: 'bookmark_remove',
+      description: `Removed bookmark: ${existingBookmark.title || title || resourceId}`,
+      metadata: {
+        resourceId: String(resourceId),
+        type,
+        title: existingBookmark.title || title || '',
+      },
+    }).catch(() => {});
     res.json({
       message: 'Bookmark removed successfully',
       action: 'removed',
@@ -169,6 +182,18 @@ const toggleBookmark = asyncHandler(async (req, res) => {
     });
 
     await bookmark.save();
+
+    // Fire-and-forget activity log for bookmark add
+    ActivityLog.create({
+      userId,
+      action: 'bookmark_add',
+      description: `Bookmarked ${type || 'item'}: ${bookmark.title || title || resourceId}`,
+      metadata: {
+        resourceId: String(resourceId),
+        type,
+        title: bookmark.title || title || '',
+      },
+    }).catch(() => {});
 
     res.json({
       message: 'Bookmark added successfully',

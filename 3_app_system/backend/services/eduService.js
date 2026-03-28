@@ -1,4 +1,5 @@
 const { EduResource } = require('../models/EduResource');
+const { normalizeEmbeddedQuiz } = require('../utils/quizNormalize');
 
 class EduService {
   async getAllPublishedEdu() {
@@ -30,7 +31,7 @@ class EduService {
             name: obj.name || obj.title || 'Untitled',   // Keep both fields for compatibility
             description: obj.description || 'No description available', // Provide fallback for description
             content: obj.content || obj.description || 'No content available', // Provide fallback for content
-            quiz: obj.quiz || null, // Preserve quiz data
+            quiz: normalizeEmbeddedQuiz(obj.quiz) || null,
             contentAttachments: obj.contentAttachments || [], // Content-specific attachments
             quizAttachments: obj.quizAttachments || [], // Quiz-specific attachments
             attachments: obj.attachments || [] // Keep old attachments for backward compatibility
@@ -68,19 +69,20 @@ class EduService {
     if (!edu) {
       throw new Error('Educational resource not found');
     }
-    
-    
+
+    const obj = edu.toObject();
+
     // Transform data to ensure frontend gets the expected field names
     const result = {
-      ...edu.toObject(),
+      ...obj,
       title: edu.title || edu.name, // Use title if available, otherwise use name
       name: edu.name || edu.title,   // Keep both fields for compatibility
-      quiz: edu.quiz || null, // Preserve quiz data
+      quiz: normalizeEmbeddedQuiz(obj.quiz) || null,
       contentAttachments: edu.contentAttachments || [], // Content-specific attachments
       quizAttachments: edu.quizAttachments || [], // Quiz-specific attachments
       attachments: edu.attachments || [] // Keep old attachments for backward compatibility
     };
-    
+
     return result;
   }
 
@@ -93,7 +95,7 @@ class EduService {
       ...item.toObject(),
       title: item.title || item.name,
       name: item.name || item.title,
-      quiz: item.quiz || null, // Preserve quiz data
+      quiz: normalizeEmbeddedQuiz(item.quiz) || null,
       contentAttachments: item.contentAttachments || [], // Content-specific attachments
       quizAttachments: item.quizAttachments || [], // Quiz-specific attachments
       attachments: item.attachments || [] // Keep old attachments for backward compatibility
@@ -115,11 +117,21 @@ class EduService {
       ...item.toObject(),
       title: item.title || item.name,
       name: item.name || item.title,
-      quiz: item.quiz || null, // Preserve quiz data
+      quiz: normalizeEmbeddedQuiz(item.quiz) || null,
       contentAttachments: item.contentAttachments || [], // Content-specific attachments
       quizAttachments: item.quizAttachments || [], // Quiz-specific attachments
       attachments: item.attachments || [] // Keep old attachments for backward compatibility
     }));
+  }
+
+  async incrementView(eduId) {
+    const result = await EduResource.findByIdAndUpdate(
+      eduId,
+      { $inc: { views: 1 } },
+      { new: true }
+    );
+    if (!result) throw new Error('Educational resource not found');
+    return result;
   }
 
   async getEduByCategory(category) {
@@ -133,7 +145,7 @@ class EduService {
       ...item.toObject(),
       title: item.title || item.name,
       name: item.name || item.title,
-      quiz: item.quiz || null, // Preserve quiz data
+      quiz: normalizeEmbeddedQuiz(item.quiz) || null,
       contentAttachments: item.contentAttachments || [], // Content-specific attachments
       quizAttachments: item.quizAttachments || [], // Quiz-specific attachments
       attachments: item.attachments || [] // Keep old attachments for backward compatibility

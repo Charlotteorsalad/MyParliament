@@ -6,7 +6,8 @@ const Modal = ({
   onClose, 
   children, 
   size = 'md', 
-  className = '' 
+  className = '',
+  style = {}
 }) => {
   useEffect(() => {
     const handleEscape = (e) => {
@@ -36,6 +37,10 @@ const Modal = ({
     full: 'max-w-7xl'
   };
 
+  // When custom style has width/maxWidth, don't use class-based width so it's not tied to viewport
+  const hasCustomWidth = style && (style.width != null || style.maxWidth != null);
+  const widthClasses = hasCustomWidth ? '' : `w-[95%] ${sizes[size]}`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
@@ -45,7 +50,10 @@ const Modal = ({
       />
       
       {/* Modal */}
-      <div className={`relative bg-white rounded-2xl shadow-2xl w-[95%] ${sizes[size]} mx-4 max-h-[90vh] flex flex-col ${className}`}>
+      <div 
+        className={`relative bg-white rounded-2xl shadow-2xl mx-4 max-h-[90vh] flex flex-col ${widthClasses} ${className}`.trim()}
+        style={style}
+      >
         {children}
       </div>
     </div>
@@ -89,7 +97,8 @@ Modal.propTypes = {
   onClose: PropTypes.func.isRequired,
   children: PropTypes.node.isRequired,
   size: PropTypes.oneOf(['sm', 'md', 'lg', 'xl', 'full']),
-  className: PropTypes.string
+  className: PropTypes.string,
+  style: PropTypes.object
 };
 
 ModalHeader.propTypes = {

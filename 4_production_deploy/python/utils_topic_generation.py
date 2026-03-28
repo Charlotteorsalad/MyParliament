@@ -6,8 +6,31 @@ Provides fast, rule-based topic naming for Malaysian parliamentary debates.
 Focuses on political issues, policies, and reforms rather than dates/names.
 Can be easily updated with new rules and categories.
 """
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Set
 import re
+
+
+# ---------------------------------------------------------------------------
+# MP name token filter (populated at runtime from the Mp collection)
+# ---------------------------------------------------------------------------
+
+_MP_NAME_TOKENS: Set[str] = set()
+
+
+def set_mp_name_tokens(tokens: Set[str]) -> None:
+    """
+    Populate the module-level MP name token filter.
+
+    Call this once before running batch_generate_topic_names, passing a set of
+    lowercase single-word tokens extracted from the Mp collection (name,
+    full_name_with_titles, original_name_variations).  Any keyword whose
+    individual words are all in this set will be dropped by clean_keywords.
+    """
+    global _MP_NAME_TOKENS
+    _MP_NAME_TOKENS = tokens
+
+
+# ---------------------------------------------------------------------------
 
 
 def is_year_or_date(keyword: str) -> bool:
@@ -58,6 +81,15 @@ def clean_keywords(keywords: List[str], max_keywords: int = 15) -> List[str]:
         'aib', 'nmg', 'gsh', 'haija', 'suhboirhn', 'bahagianp',
         '9hb', 'tiap tiap', 'disebabkan per', 'terlebih berkhidmat',
         'congratulations', 'ranchangan',
+        # OCR concatenations and garbled tokens
+        'unclang', 'mempasti', 'yangdi', 'datukhajijuhar', 'datukhaji',
+        'hajijamaluddin', 'hajijuhar', 'onourambelmeb', 'nourambelmeb',
+        'begibtaun', 'kepadanyoal', 'perdanmae', 'anggapreamnb',
+        'timbalamnc', 'berdir', 'koperas', 'behrorm', 'saymai',
+        # Person name / honorific fragments
+        'ariff', 'tamby', 'rahim tamby',
+        # Constituency names that don't carry policy meaning on their own
+        'besut', 'renggam', 'indera', 'pandan',
     }
     
     # Common Malaysian politician names and titles (partial matching)
@@ -69,6 +101,10 @@ def clean_keywords(keywords: List[str], max_keywords: int = 15) -> List[str]:
         r'nik ahmed', r'hamid jaafar', r'dahlan', r'seng chai', r'hasnon',
         r'eric chia', r'soros', r'george', r'paduka', r'si cheng',
         r'wan wan', r'mamat', r'kiat', r'hu sepang', r'yacob',
+        # Additional well-known names
+        r'mahathir', r'najib', r'muhyiddin', r'hishammuddin', r'khairy',
+        r'azmin', r'rafizi', r'shahidan', r'idris', r'zahid', r'anwar',
+        r'rahim tamby', r'ariff', r'vijay', r'kadir',
     ]
     
     cleaned = []
@@ -81,6 +117,10 @@ def clean_keywords(keywords: List[str], max_keywords: int = 15) -> List[str]:
         
         # Skip years and dates
         if is_year_or_date(kw_lower):
+            continue
+
+        # Skip any phrase that CONTAINS a year (e.g. "pindaan 1997", "30 1998")
+        if any(re.match(r'^(19|20)\d{2}$', word) for word in kw_lower.split()):
             continue
             
         # Skip pure numbers and number patterns
@@ -101,6 +141,12 @@ def clean_keywords(keywords: List[str], max_keywords: int = 15) -> List[str]:
         # Skip generic terms
         if kw_lower in skip_words:
             continue
+
+        # Skip if all meaningful words in this keyword are MP name tokens
+        if _MP_NAME_TOKENS:
+            kw_words = [re.sub(r'[^\w]', '', w) for w in kw_lower.split() if len(w) >= 4]
+            if kw_words and all(w in _MP_NAME_TOKENS for w in kw_words):
+                continue
             
         # Skip politician names (partial match)
         is_name = False

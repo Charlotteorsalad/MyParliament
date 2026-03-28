@@ -4,58 +4,71 @@ import { authApi } from '../api';
 // Create Admin Auth Context
 const AdminAuthContext = createContext();
 
+// Restore admin from localStorage so refresh doesn't log out before verification
+const getStoredAdmin = () => {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('adminData') : null;
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const hasStoredToken = () => {
+  try {
+    return !!(typeof localStorage !== 'undefined' && localStorage.getItem('adminToken'));
+  } catch {
+    return false;
+  }
+};
+
 // Admin Auth Provider
 export const AdminAuthProvider = ({ children }) => {
-  const [admin, setAdmin] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const storedAdmin = getStoredAdmin();
+  const hasToken = hasStoredToken();
+  const [admin, setAdmin] = useState(storedAdmin);
+  const hasStoredCredentials = !!(hasToken && storedAdmin);
+  const [loading, setLoading] = useState(hasStoredCredentials);
+  const [isAuthenticated, setIsAuthenticated] = useState(hasStoredCredentials);
 
+  // On mount: if we have stored credentials, verify once (catches expired tokens).
+  // Also listen for admin:logout events fired by Axios interceptors on 401.
   useEffect(() => {
-    checkAdminAuth();
+    const adminToken = localStorage.getItem('adminToken');
+    const adminData = localStorage.getItem('adminData');
+    if (!adminToken || !adminData) {
+      clearAdminAuth();
+    } else {
+      checkAdminAuth().finally(() => setLoading(false));
+    }
+
+    const handleForceLogout = () => clearAdminAuth();
+    window.addEventListener('admin:logout', handleForceLogout);
+    return () => window.removeEventListener('admin:logout', handleForceLogout);
   }, []);
 
   const checkAdminAuth = async () => {
+    const adminToken = localStorage.getItem('adminToken');
+    const adminData = localStorage.getItem('adminData');
+    if (!adminToken || !adminData) {
+      clearAdminAuth();
+      return;
+    }
     try {
-      console.log('AdminAuthProvider: Checking admin auth...');
-      const adminToken = localStorage.getItem('adminToken');
-      const adminData = localStorage.getItem('adminData');
-      
-      console.log('AdminAuthProvider: Token exists:', !!adminToken);
-      console.log('AdminAuthProvider: Data exists:', !!adminData);
-
-      if (adminToken && adminData) {
-        // Verify token is still valid by getting profile
-        try {
-          console.log('AdminAuthProvider: Verifying token with backend...');
-          const response = await authApi.getAdminProfile();
-          console.log('AdminAuthProvider: Profile response:', response);
-          if (response.success) {
-            setAdmin(response.admin);
-            setIsAuthenticated(true);
-            console.log('AdminAuthProvider: Authentication successful');
-          } else {
-            console.log('AdminAuthProvider: Profile verification failed');
-            clearAdminAuth();
-          }
-        } catch (error) {
-          console.log('AdminAuthProvider: Profile verification error:', error);
-          clearAdminAuth();
-        }
+      const response = await authApi.getAdminProfile();
+      if (response.success && response.admin) {
+        setAdmin(response.admin);
+        setIsAuthenticated(true);
+        localStorage.setItem('adminData', JSON.stringify(response.admin));
       } else {
-        console.log('AdminAuthProvider: No token or data found');
         clearAdminAuth();
       }
     } catch (error) {
-      console.error('AdminAuthProvider: Error checking admin auth:', error);
       clearAdminAuth();
-    } finally {
-      setLoading(false);
-      console.log('AdminAuthProvider: Auth check complete, loading set to false');
     }
   };
 
   const clearAdminAuth = () => {
-    console.log('AdminAuthProvider: Clearing admin auth');
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminData');
     setAdmin(null);
@@ -64,20 +77,16 @@ export const AdminAuthProvider = ({ children }) => {
 
   const login = async (credentials) => {
     try {
-      console.log('AdminAuthProvider: Attempting login...');
       const response = await authApi.adminLogin(credentials);
-      console.log('AdminAuthProvider: Login response:', response);
       if (response.success) {
         localStorage.setItem('adminToken', response.token);
         localStorage.setItem('adminData', JSON.stringify(response.admin));
         setAdmin(response.admin);
         setIsAuthenticated(true);
-        console.log('AdminAuthProvider: Login successful, state updated');
         return response;
       }
       throw new Error(response.message || 'Login failed');
     } catch (error) {
-      console.log('AdminAuthProvider: Login error:', error);
       throw error;
     }
   };

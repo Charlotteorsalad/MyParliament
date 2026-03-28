@@ -23,5 +23,11 @@ export const quizApi = {
   getQuizHistory: async (params = {}) => {
     const response = await api.get('/quiz/history', { params });
     return response.data;
+  },
+
+  // Get existing submission for a resource (restores state after refresh/login)
+  getSubmissionByResource: async (resourceId) => {
+    const response = await api.get(`/quiz/submission/${resourceId}`);
+    return response.data;
   }
 };

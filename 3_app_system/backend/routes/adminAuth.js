@@ -11,7 +11,10 @@ const {
   resetPassword,
   getAllAdminUsers: getAllAdminsFromAuth,
   deleteAdmin,
-  updateAdmin
+  updateAdmin,
+  setupMfa,
+  enableMfa,
+  disableMfa
 } = require('../controllers/adminAuthController');
 
 const {
@@ -50,6 +53,11 @@ router.get('/profile', getAdminProfile);
 router.put('/profile', updateAdminProfile);
 router.put('/change-password', changeAdminPassword);
 
+// MFA (real TOTP - Google Authenticator / Authy)
+router.post('/mfa/setup', setupMfa);
+router.post('/mfa/enable', enableMfa);
+router.post('/mfa/disable', disableMfa);
+
 // Admin management routes (superadmin only) - Quick Actions
 router.get('/users', authorize('superadmin'), getAllAdminUsers);
 router.post('/users', authorize('superadmin'), createUser);
@@ -75,20 +83,16 @@ router.get('/analytics', requirePermission('view_analytics'), (req, res) => {
   res.json({ message: 'Access granted to view analytics' });
 });
 
-router.get('/settings', requirePermission('manage_settings'), (req, res) => {
-  res.json({ message: 'Access granted to manage settings' });
-});
-
-router.get('/posts', requireAnyPermission('approve_posts', 'delete_posts'), (req, res) => {
-  res.json({ message: 'Access granted to manage posts' });
-});
-
-router.get('/topics', requirePermission('manage_topics'), (req, res) => {
-  res.json({ message: 'Access granted to manage topics' });
-});
-
 router.get('/mps', requirePermission('manage_mps'), (req, res) => {
   res.json({ message: 'Access granted to manage MPs' });
+});
+
+router.get('/forum', requirePermission('moderate_forum'), (req, res) => {
+  res.json({ message: 'Access granted to moderate forum' });
+});
+
+router.get('/support', requirePermission('manage_support'), (req, res) => {
+  res.json({ message: 'Access granted to manage technical support' });
 });
 
 // Statistics endpoints

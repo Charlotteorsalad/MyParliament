@@ -82,7 +82,6 @@ function ListModal({ isOpen, onClose, title, data }) {
           {filteredData.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-500">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                {title === 'Followed MPs' ? '👤' : '🏷️'}
               </div>
               <p className="text-center">
                 {searchTerm ? 'No results found' : `No ${title.toLowerCase()} yet`}
@@ -116,7 +115,6 @@ function ListModal({ isOpen, onClose, title, data }) {
                       ) : null
                     ) : null}
                     <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold ${item.profilePicture ? 'hidden' : 'flex'}`}>
-                      {title === 'Followed MPs' ? '👤' : '🏷️'}
                     </div>
                   </div>
 

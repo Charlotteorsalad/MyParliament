@@ -1,39 +1,74 @@
 const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
 const asyncHandler = require('../middleware/asyncHandler');
+const { logAdminActivity } = require('../utils/adminActivityLogger');
 
-// Search users by username or email
+// Search users: same logic as User list (getAllUsers) — case-insensitive, spaces ignored, first/last name order doesn't matter, email kept
 const searchUsers = asyncHandler(async (req, res) => {
   const { q } = req.query;
-  
+
   if (!q || q.trim().length < 2) {
-    return res.status(400).json({ 
-      message: 'Search query must be at least 2 characters long' 
+    return res.status(400).json({
+      message: 'Search query must be at least 2 characters long'
     });
   }
 
-  const searchTerm = q.trim();
-  const users = await User.find({
-    $or: [
-      { username: { $regex: searchTerm, $options: 'i' } },
-      { email: { $regex: searchTerm, $options: 'i' } },
-      { 'profile.firstName': { $regex: searchTerm, $options: 'i' } },
-      { 'profile.lastName': { $regex: searchTerm, $options: 'i' } }
-    ]
-  })
-  .select('-password -resetPasswordToken -resetPasswordExpires')
-  .limit(10)
-  .sort({ lastLogin: -1 });
+  const search = q.trim();
+  const normalized = search.replace(/\s+/g, '').toLowerCase();
+  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegex(normalized);
+  const pattern = normalized ? `.*${escaped}.*` : '';
 
-  // Add name field for frontend compatibility
+  const orConditions = [
+    { email: { $regex: escapeRegex(search), $options: 'i' } },
+    { username: { $regex: pattern, $options: 'i' } },
+  ];
+
+  if (normalized.length > 0) {
+    const nameExpr = {
+      $or: [
+        {
+          $regexMatch: {
+            input: {
+              $replaceAll: {
+                input: { $toLower: { $concat: [{ $ifNull: ['$profile.firstName', ''] }, { $ifNull: ['$profile.lastName', ''] }] } },
+                find: ' ',
+                replacement: '',
+              },
+            },
+            regex: pattern,
+          },
+        },
+        {
+          $regexMatch: {
+            input: {
+              $replaceAll: {
+                input: { $toLower: { $concat: [{ $ifNull: ['$profile.lastName', ''] }, { $ifNull: ['$profile.firstName', ''] }] } },
+                find: ' ',
+                replacement: '',
+              },
+            },
+            regex: pattern,
+          },
+        },
+      ],
+    };
+    orConditions.push({ $expr: nameExpr });
+  }
+
+  const filter = { $or: orConditions };
+
+  const users = await User.find(filter)
+    .select('-password -resetPasswordToken -resetPasswordExpires')
+    .limit(10)
+    .sort({ lastLogin: -1 });
+
   const usersWithName = users.map(user => ({
     ...user.toObject(),
-    name: user.profile?.firstName && user.profile?.lastName 
+    name: user.profile?.firstName && user.profile?.lastName
       ? `${user.profile.firstName} ${user.profile.lastName}`
       : user.username
   }));
-
-  console.log('User monitoring search:', { searchTerm, resultsCount: usersWithName.length });
 
   res.json(usersWithName);
 });
@@ -71,7 +106,6 @@ const getUserActivities = asyncHandler(async (req, res) => {
     type: activity.action
   }));
 
-  console.log('User activities fetched:', { userId, total, page, limit });
 
   res.json({
     activities: formattedActivities,
@@ -87,23 +121,106 @@ const getUserActivities = asyncHandler(async (req, res) => {
       _id: user._id,
       username: user.username,
       email: user.email,
+      status: user.status || 'active',
       isRestricted: user.isRestricted || false,
       restrictedSince: user.restrictedSince || null,
+      restrictionEndDate: user.restrictionEndDate || null,
+      restrictionReason: user.restrictionReason || null,
       lastLogin: user.lastLogin,
       createdAt: user.createdAt
     }
   });
 });
 
-// Restrict user
+// Suspend user (permanent ban: cannot login)
+const suspendUser = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  user.status = 'suspended';
+  await user.save();
+
+  const adminId = req.admin && (req.admin._id || req.admin.id);
+  if (adminId) {
+    await logAdminActivity(
+      adminId,
+      'suspend_user',
+      `Suspended user (permanent): ${user.username}`,
+      JSON.stringify({ userId: user._id })
+    );
+  }
+
+  res.json({
+    message: `User ${user.username} has been suspended. They can no longer log in.`,
+    user: {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      status: user.status
+    }
+  });
+});
+
+// Unsuspend user (restore login)
+const unsuspendUser = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  user.status = 'active';
+  await user.save();
+
+  const adminId = req.admin && (req.admin._id || req.admin.id);
+  if (adminId) {
+    await logAdminActivity(
+      adminId,
+      'unsuspend_user',
+      `Unsuspended user: ${user.username}`,
+      JSON.stringify({ userId: user._id })
+    );
+  }
+
+  res.json({
+    message: `User ${user.username} has been unsuspended and can log in again.`,
+    user: {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      status: user.status
+    }
+  });
+});
+
+// Restrict user (accepts endDate or days, and reason; reason is stored and shown to user)
 const restrictUser = asyncHandler(async (req, res) => {
   const { userId } = req.params;
-  const { days } = req.body;
+  const { endDate: endDateParam, days, reason } = req.body;
 
-  if (!days || days < 1 || days > 365) {
-    return res.status(400).json({ 
-      message: 'Restriction period must be between 1 and 365 days' 
-    });
+  let restrictionEndDate;
+  if (endDateParam) {
+    restrictionEndDate = new Date(endDateParam);
+    if (Number.isNaN(restrictionEndDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid restrict-until date' });
+    }
+    if (restrictionEndDate <= new Date()) {
+      return res.status(400).json({ message: 'Restrict-until date must be in the future' });
+    }
+  } else {
+    const numDays = days != null ? Number(days) : 30;
+    if (numDays < 1 || numDays > 365) {
+      return res.status(400).json({
+        message: 'Restriction period must be between 1 and 365 days'
+      });
+    }
+    restrictionEndDate = new Date();
+    restrictionEndDate.setDate(restrictionEndDate.getDate() + numDays);
   }
 
   const user = await User.findById(userId);
@@ -111,18 +228,26 @@ const restrictUser = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'User not found' });
   }
 
-  const restrictionEndDate = new Date();
-  restrictionEndDate.setDate(restrictionEndDate.getDate() + days);
-
   user.isRestricted = true;
   user.restrictedSince = new Date();
   user.restrictionEndDate = restrictionEndDate;
+  user.restrictionReason = reason && String(reason).trim() ? String(reason).trim() : '';
   user.status = 'restricted';
 
   await user.save();
 
+  const adminId = req.admin && (req.admin._id || req.admin.id);
+  if (adminId) {
+    await logAdminActivity(
+      adminId,
+      'restrict_user',
+      `Restricted user: ${user.username} until ${restrictionEndDate.toLocaleDateString()}`,
+      JSON.stringify({ userId: user._id, reason: user.restrictionReason })
+    );
+  }
+
   res.json({
-    message: `User ${user.username} has been restricted for ${days} days`,
+    message: `User ${user.username} has been restricted until ${restrictionEndDate.toLocaleDateString()}.${user.restrictionReason ? ' They will see the reason you provided.' : ''}`,
     user: {
       _id: user._id,
       username: user.username,
@@ -130,6 +255,7 @@ const restrictUser = asyncHandler(async (req, res) => {
       isRestricted: user.isRestricted,
       restrictedSince: user.restrictedSince,
       restrictionEndDate: user.restrictionEndDate,
+      restrictionReason: user.restrictionReason,
       status: user.status
     }
   });
@@ -147,9 +273,20 @@ const unrestrictUser = asyncHandler(async (req, res) => {
   user.isRestricted = false;
   user.restrictedSince = null;
   user.restrictionEndDate = null;
+  user.restrictionReason = null;
   user.status = 'active';
 
   await user.save();
+
+  const adminId = req.admin && (req.admin._id || req.admin.id);
+  if (adminId) {
+    await logAdminActivity(
+      adminId,
+      'unrestrict_user',
+      `Unrestricted user: ${user.username}`,
+      JSON.stringify({ userId: user._id })
+    );
+  }
 
   res.json({
     message: `User ${user.username} has been unrestricted`,
@@ -184,6 +321,7 @@ const getUserDetails = asyncHandler(async (req, res) => {
       isRestricted: user.isRestricted || false,
       restrictedSince: user.restrictedSince || null,
       restrictionEndDate: user.restrictionEndDate || null,
+      restrictionReason: user.restrictionReason || null,
       lastLogin: user.lastLogin,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -198,6 +336,8 @@ const getUserDetails = asyncHandler(async (req, res) => {
 module.exports = {
   searchUsers,
   getUserActivities,
+  suspendUser,
+  unsuspendUser,
   restrictUser,
   unrestrictUser,
   getUserDetails

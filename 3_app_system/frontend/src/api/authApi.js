@@ -87,4 +87,18 @@ export const authApi = {
     const response = await adminApiInstance.put('/admin-auth/change-password', { currentPassword, newPassword });
     return response.data;
   },
+
+  // Admin MFA (TOTP - Google Authenticator / Authy)
+  adminMfaSetup: async () => {
+    const response = await adminApiInstance.post('/admin-auth/mfa/setup');
+    return response.data;
+  },
+  adminMfaEnable: async (otp) => {
+    const response = await adminApiInstance.post('/admin-auth/mfa/enable', { otp });
+    return response.data;
+  },
+  adminMfaDisable: async () => {
+    const response = await adminApiInstance.post('/admin-auth/mfa/disable');
+    return response.data;
+  },
 };

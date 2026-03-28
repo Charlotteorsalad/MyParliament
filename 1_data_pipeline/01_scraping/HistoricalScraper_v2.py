@@ -36,7 +36,7 @@ import requests
 import pytz
 import urllib3
 
-# Disable SSL warnings (since we're using verify=False)
+# Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class HansardScraper:
@@ -231,8 +231,8 @@ def main():
     try:
         scraper = HansardScraper(MONGODB_URI)
         results = scraper.process_date_range(
-            start_date=datetime(2025, 5, 11),
-            end_date=datetime(2026, 1, 24),
+            start_date=datetime(2026, 1, 24),
+            end_date=datetime(2026, 2, 21),
             batch_size=50
         )
         

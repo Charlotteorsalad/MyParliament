@@ -1,6 +1,8 @@
 const { EduResource, Quiz } = require('../models/EduResource');
 const asyncHandler = require('../middleware/asyncHandler');
+const { parseQuizQuestionsPayload } = require('../utils/quizNormalize');
 const multer = require('multer');
+const { broadcast } = require('../services/sseService');
 const path = require('path');
 const fs = require('fs');
 
@@ -25,25 +27,8 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt|mp4|mp3|wav/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    // Additional validation for specific file types
-    const allowedMimeTypes = [
-      'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
-      'application/pdf', 'application/msword', 
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'video/mp4', 'audio/mpeg', 'audio/wav'
-    ];
-    
-    const isValidMimeType = allowedMimeTypes.includes(file.mimetype);
-    
-    if (mimetype && extname && isValidMimeType) {
-      return cb(null, true);
-    } else {
-      cb(new Error(`Invalid file type: ${file.originalname}. Allowed formats: JPG, PNG, GIF, PDF, DOC, DOCX, MP4, MP3, WAV`));
-    }
+    // Allow all file types for content and quiz attachments
+    cb(null, true);
   }
 });
 
@@ -70,18 +55,10 @@ const getAllEduContent = asyncHandler(async (req, res) => {
     }
   }
   if (attachmentsCount !== undefined) {
-    const count = parseInt(attachmentsCount);
-    if (count === 0) {
-      // No attachments in any field
-      filter.$and = [
-        { contentAttachments: { $size: 0 } },
-        { quizAttachments: { $size: 0 } },
-        { attachments: { $size: 0 } }
-      ];
-    } else if (count === 1) {
-      // Exactly 1 attachment across all fields
+    if (attachmentsCount === 'has') {
+      // Has at least one attachment (content, quiz, or legacy)
       filter.$expr = {
-        $eq: [
+        $gte: [
           { $add: [
             { $size: { $ifNull: ['$contentAttachments', []] } },
             { $size: { $ifNull: ['$quizAttachments', []] } },
@@ -90,18 +67,26 @@ const getAllEduContent = asyncHandler(async (req, res) => {
           1
         ]
       };
-    } else if (count === 2) {
-      // Exactly 2 attachments across all fields
-      filter.$expr = {
-        $eq: [
-          { $add: [
-            { $size: { $ifNull: ['$contentAttachments', []] } },
-            { $size: { $ifNull: ['$quizAttachments', []] } },
-            { $size: { $ifNull: ['$attachments', []] } }
-          ]},
-          2
-        ]
-      };
+    } else {
+      const count = parseInt(attachmentsCount, 10);
+      if (count === 0) {
+        filter.$and = [
+          { contentAttachments: { $size: 0 } },
+          { quizAttachments: { $size: 0 } },
+          { attachments: { $size: 0 } }
+        ];
+      } else if (count >= 1) {
+        filter.$expr = {
+          $eq: [
+            { $add: [
+              { $size: { $ifNull: ['$contentAttachments', []] } },
+              { $size: { $ifNull: ['$quizAttachments', []] } },
+              { $size: { $ifNull: ['$attachments', []] } }
+            ]},
+            count
+          ]
+        };
+      }
     }
   }
   if (search) {
@@ -113,29 +98,70 @@ const getAllEduContent = asyncHandler(async (req, res) => {
   }
   
   // Build sort object
-  const sort = {};
-  sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  let sort = {};
   
-  // Debug: Log the filter object
-  console.log('EduContent filters:', { status, category, search, hasQuiz, attachmentsCount, filter });
+  // Handle special sort fields
+  if (sortBy === 'hasQuiz') {
+    // Sort by quiz existence: items with quiz come first (desc) or last (asc)
+    sort = sortOrder === 'desc' 
+      ? { quiz: -1 } // Has quiz first
+      : { quiz: 1 }; // No quiz first (null/undefined come first)
+  } else if (sortBy === 'attachmentsCount') {
+    // For attachments count, we'll use aggregation pipeline
+    // For now, use a simple approach: sort by contentAttachments length
+    sort = sortOrder === 'desc'
+      ? { 'contentAttachments': -1 }
+      : { 'contentAttachments': 1 };
+  } else {
+    // Standard field sorting
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  }
   
-  const content = await EduResource.find(filter)
-    .populate('createdBy', 'username email')
-    .populate('updatedBy', 'username email')
-    .populate('quiz', 'title questions')
-    .sort(sort)
-    .skip(skip)
-    .limit(limit);
+  let content;
+  
+  // Use aggregation for attachmentsCount sorting to calculate total attachments
+  if (sortBy === 'attachmentsCount') {
+    const pipeline = [
+      { $match: filter },
+      {
+        $addFields: {
+          totalAttachments: {
+            $add: [
+              { $size: { $ifNull: ['$contentAttachments', []] } },
+              { $size: { $ifNull: ['$quizAttachments', []] } },
+              { $size: { $ifNull: ['$attachments', []] } }
+            ]
+          }
+        }
+      },
+      { $sort: { totalAttachments: sortOrder === 'desc' ? -1 : 1 } },
+      { $skip: skip },
+      { $limit: limit }
+    ];
+    
+    const results = await EduResource.aggregate(pipeline);
+    const ids = results.map(r => r._id);
+    
+    // Fetch full documents with population
+    content = await EduResource.find({ _id: { $in: ids } })
+      .populate('createdBy', 'username email')
+      .populate('updatedBy', 'username email')
+      .populate('quiz', 'title questions');
+    
+    // Maintain sort order from aggregation
+    const contentMap = new Map(content.map(c => [c._id.toString(), c]));
+    content = ids.map(id => contentMap.get(id.toString())).filter(Boolean);
+  } else {
+    content = await EduResource.find(filter)
+      .populate('createdBy', 'username email')
+      .populate('updatedBy', 'username email')
+      .populate('quiz', 'title questions')
+      .sort(sort)
+      .skip(skip)
+      .limit(limit);
+  }
   
   const total = await EduResource.countDocuments(filter);
-  
-  // Debug: Log attachment data for first item
-  if (content.length > 0) {
-    console.log('First content item attachments:');
-    console.log('contentAttachments:', content[0].contentAttachments);
-    console.log('quizAttachments:', content[0].quizAttachments);
-    console.log('attachments:', content[0].attachments);
-  }
   
   res.json({
     content,
@@ -164,20 +190,6 @@ const getEduContentById = asyncHandler(async (req, res) => {
 
 // Create new educational content
 const createEduContent = asyncHandler(async (req, res) => {
-  console.log('=== createEduContent called ===');
-  console.log('Request body size:', JSON.stringify(req.body).length, 'characters');
-  console.log('createEduContent: req.admin:', req.admin);
-  console.log('createEduContent: req.admin._id:', req.admin?._id);
-  console.log('createEduContent: req.body keys:', Object.keys(req.body));
-  console.log('createEduContent: imageData exists:', !!req.body.imageData);
-  console.log('createEduContent: imageContentType:', req.body.imageContentType);
-  console.log('createEduContent: imageSize:', req.body.imageSize);
-  console.log('createEduContent: imageOriginalName:', req.body.imageOriginalName);
-  if (req.body.imageData) {
-    console.log('createEduContent: imageData length:', req.body.imageData.length);
-    console.log('createEduContent: imageData start:', req.body.imageData.substring(0, 50) + '...');
-  }
-  
   const {
     title,
     description,
@@ -198,9 +210,11 @@ const createEduContent = asyncHandler(async (req, res) => {
     quizTimeLimit,
     quizPassingScore,
     quizMaxAttempts,
-    quizQuestions
+    quizQuestions,
+    status
   } = req.body;
   
+  const isDraft = status === 'draft';
   const eduContent = new EduResource({
     name: title, // Set name field (required) to match title
     title,
@@ -221,8 +235,8 @@ const createEduContent = asyncHandler(async (req, res) => {
     quiz: (() => {
       
       if (hasQuiz && quizTitle) {
-        // Parse quiz questions and filter out those without correct answers
-        const parsedQuestions = quizQuestions ? JSON.parse(quizQuestions) : [];
+        // Parse quiz questions (string or array) and filter out those without correct answers
+        const parsedQuestions = parseQuizQuestionsPayload(quizQuestions);
         const validQuestions = parsedQuestions.filter(q => 
           q.question && q.question.trim() && 
           q.correctAnswer !== null && q.correctAnswer !== undefined
@@ -243,19 +257,12 @@ const createEduContent = asyncHandler(async (req, res) => {
       }
     })(),
     createdBy: req.admin._id,
-    status: 'published', // Create as published so it shows on user side
-    publishedAt: new Date()
+    status: isDraft ? 'draft' : (status || 'published'),
+    ...(isDraft ? {} : { publishedAt: new Date() })
   });
   
   await eduContent.save();
-  
-  console.log('=== Content saved successfully ===');
-  console.log('Saved content image keys:', eduContent.image ? Object.keys(eduContent.image) : 'NULL');
-  console.log('Saved content image data length:', eduContent.image?.data?.length);
-  console.log('Saved content image contentType:', eduContent.image?.contentType);
-  console.log('Saved content image size:', eduContent.image?.size);
-  console.log('Saved content image originalName:', eduContent.image?.originalName);
-  
+  broadcast('edu_updated', { action: 'create', id: String(eduContent._id) });
   res.status(201).json({
     message: 'Educational content created successfully',
     content: eduContent
@@ -313,7 +320,7 @@ const updateEduContent = asyncHandler(async (req, res) => {
   if (!content) {
     return res.status(404).json({ message: 'Educational content not found' });
   }
-  
+  broadcast('edu_updated', { action: 'update', id: String(content._id) });
   res.json({
     message: 'Educational content updated successfully',
     content
@@ -337,7 +344,7 @@ const publishEduContent = asyncHandler(async (req, res) => {
   if (!content) {
     return res.status(404).json({ message: 'Educational content not found' });
   }
-  
+  broadcast('edu_updated', { action: 'publish', id: String(content._id) });
   res.json({
     message: 'Educational content published successfully',
     content
@@ -360,7 +367,7 @@ const archiveEduContent = asyncHandler(async (req, res) => {
   if (!content) {
     return res.status(404).json({ message: 'Educational content not found' });
   }
-  
+  broadcast('edu_updated', { action: 'archive', id: String(content._id) });
   res.json({
     message: 'Educational content archived successfully',
     content
@@ -386,25 +393,19 @@ const deleteEduContent = asyncHandler(async (req, res) => {
     });
   }
   
+  broadcast('edu_updated', { action: 'delete', id });
   res.json({ message: 'Educational content deleted successfully' });
 });
 
 // Upload file attachment
 const uploadAttachment = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const attachmentType = req.body.attachmentType || 'content'; // Default to content
-  
-  console.log('=== uploadAttachment called ===');
-  console.log('Content ID:', id);
-  console.log('Attachment Type:', attachmentType);
-  console.log('File received:', req.file);
+  const attachmentType = req.body.attachmentType || 'content';
   
   if (!req.file) {
-    console.log('No file uploaded');
     return res.status(400).json({ message: 'No file uploaded' });
   }
   
-  // Get the correct backend URL (use environment variable or default to localhost:5000)
   const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
   
   const attachment = {
@@ -415,13 +416,6 @@ const uploadAttachment = asyncHandler(async (req, res) => {
     url: `${backendUrl}/uploads/edu-content/${req.file.filename}`
   };
   
-  console.log('Backend URL used:', backendUrl);
-  console.log('Attachment object:', attachment);
-  console.log('Generated URL:', attachment.url);
-  console.log('Request protocol:', req.protocol);
-  console.log('Request host:', req.get('host'));
-  
-  // Determine which field to update based on attachment type
   const updateField = attachmentType === 'quiz' ? 'quizAttachments' : 'contentAttachments';
   
   const content = await EduResource.findByIdAndUpdate(
@@ -429,12 +423,6 @@ const uploadAttachment = asyncHandler(async (req, res) => {
     { $push: { [updateField]: attachment } },
     { new: true, runValidators: true }
   );
-  
-  console.log('Updated content:', content ? 'Found' : 'Not found');
-  if (content) {
-    console.log(`Content ${updateField} count:`, content[updateField]?.length || 0);
-    console.log('Latest attachment:', content[updateField]?.[content[updateField].length - 1]);
-  }
   
   if (!content) {
     return res.status(404).json({ message: 'Educational content not found' });
@@ -628,23 +616,15 @@ const getEduContentStats = asyncHandler(async (req, res) => {
 
 // Migration function to remove old Cloudinary image data
 const migrateImages = asyncHandler(async (req, res) => {
-  console.log('=== Starting image migration ===');
-  
   try {
-    // Find all resources with old Cloudinary format
     const resourcesWithOldImages = await EduResource.find({
       'image.public_id': { $exists: true }
     });
     
-    console.log(`Found ${resourcesWithOldImages.length} resources with old Cloudinary images`);
-    
-    // Remove the old image data from all resources
     const result = await EduResource.updateMany(
       { 'image.public_id': { $exists: true } },
       { $unset: { image: 1 } }
     );
-    
-    console.log(`Updated ${result.modifiedCount} resources`);
     
     res.json({
       message: 'Image migration completed successfully',

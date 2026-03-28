@@ -72,7 +72,22 @@ const forumPostSchema = new mongoose.Schema({
       note: String,
       action: {
         type: String,
-        enum: ['reviewed', 'warned', 'hidden', 'deleted', 'approved']
+        enum: [
+          'reviewed',
+          'warned',
+          'hidden',
+          'deleted',
+          'approved',
+          'approve',
+          'restrict',
+          'archive',
+          'flag',
+          'mark_sensitive'
+        ]
+      },
+      notifyUser: {
+        type: Boolean,
+        default: false
       },
       createdAt: {
         type: Date,
@@ -89,7 +104,22 @@ const forumPostSchema = new mongoose.Schema({
     }
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      ret.id = ret._id;
+      delete ret.__v;
+      return ret;
+    }
+  },
+  toObject: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      ret.id = ret._id;
+      return ret;
+    }
+  }
 });
 
 // Index for better query performance

@@ -1,10 +1,12 @@
 const authService = require('../services/authService');
 const { logLogin } = require('../middleware/activityLogger');
+const { broadcast } = require('../services/sseService');
 
 exports.registerUser = async (req, res) => {
   try {
     const result = await authService.registerUser(req.body);
     console.log("User created with pending status:", result.user);
+    broadcast('user_registered', { id: String(result.user?._id || result.user?.id || '') });
     res.json(result);
   } catch (err) {
     if (err.message === "Email already exists") {
@@ -59,6 +61,9 @@ exports.loginUser = async (req, res) => {
   } catch (err) {
     if (err.message === 'Email not found' || err.message === 'Incorrect password') {
       return res.status(401).json({ message: err.message });
+    }
+    if (err.message && err.message.includes('suspended')) {
+      return res.status(401).json({ message: err.message, code: 'ACCOUNT_SUSPENDED' });
     }
     res.status(500).json({ message: "Login failed", error: err.message });
   }

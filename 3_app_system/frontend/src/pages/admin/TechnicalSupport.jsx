@@ -1,8 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { adminApi } from '../../api';
+import { DatePickerField } from '../../components/ui';
+import { useAdminAuth } from '../../hooks/useAdminAuth.jsx';
+
+const TECH_SUPPORT_ACTIVE_TAB_KEY = 'technicalSupport.activeTab';
+const TECH_SUPPORT_MAINTENANCE_VIEW_KEY = 'technicalSupport.maintenanceView';
 
 const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
-  const [activeTab, setActiveTab] = useState('incidents');
+  const { admin: currentAdmin } = useAdminAuth();
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === 'undefined') return 'incidents';
+
+    const savedTab = window.localStorage.getItem(TECH_SUPPORT_ACTIVE_TAB_KEY);
+    return ['incidents', 'changes', 'maintenance'].includes(savedTab) ? savedTab : 'incidents';
+  });
+
   const [tickets, setTickets] = useState([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState([]);
   const [adminUsers, setAdminUsers] = useState([]);
@@ -12,20 +24,37 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterPriority, setFilterPriority] = useState('all');
-  const [filterAssignee, setFilterAssignee] = useState('all');
+  const [filterAssignee, setFilterAssignee] = useState('');
+  const [assigneeSearchTerm, setAssigneeSearchTerm] = useState('');
+  const [isAssigneeDropdownOpen, setIsAssigneeDropdownOpen] = useState(false);
+  const assigneeDropdownRef = useRef(null);
   const [viewMode, setViewMode] = useState('list');
+  const [incidentStatusTab, setIncidentStatusTab] = useState('New');
+  const [changeStatusTab, setChangeStatusTab] = useState('New');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState('desc');
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [goToPageInput, setGoToPageInput] = useState('');
   
   // Maintenance Scheduler states
   const [scheduledMaintenance, setScheduledMaintenance] = useState([]);
   const [showCreateScheduledMaintenance, setShowCreateScheduledMaintenance] = useState(false);
   const [selectedMaintenance, setSelectedMaintenance] = useState(null);
-  const [maintenanceView, setMaintenanceView] = useState('calendar'); // 'calendar' or 'list'
+  const [maintenanceView, setMaintenanceView] = useState(() => {
+    if (typeof window === 'undefined') return 'calendar';
+
+    const savedView = window.localStorage.getItem(TECH_SUPPORT_MAINTENANCE_VIEW_KEY);
+    return ['calendar', 'list'].includes(savedView) ? savedView : 'calendar';
+  }); // 'calendar' or 'list'
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [maintenanceNow, setMaintenanceNow] = useState(Date.now());
+  const [maintenanceListStatusFilter, setMaintenanceListStatusFilter] = useState('Scheduled');
+  const [maintenanceListCategoryFilter, setMaintenanceListCategoryFilter] = useState('all');
+  const [maintenanceListPriorityFilter, setMaintenanceListPriorityFilter] = useState('all');
+  const [maintenanceListPage, setMaintenanceListPage] = useState(1);
+  const [maintenanceGoToPageInput, setMaintenanceGoToPageInput] = useState('');
   
   // Incident creation states
   const [incidentForm, setIncidentForm] = useState({
@@ -38,11 +67,20 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     subcategory: '',
     caller: '',
     callerEmail: '',
-    assignedTo: '',
-    assignmentGroup: ''
+    assignedTo: ''
   });
   const [incidentFormErrors, setIncidentFormErrors] = useState({});
   const [isSubmittingIncident, setIsSubmittingIncident] = useState(false);
+  const [incidentSubmitError, setIncidentSubmitError] = useState('');
+  const [incidentActionModal, setIncidentActionModal] = useState(null);
+  const [incidentActionComment, setIncidentActionComment] = useState('');
+  const [incidentActionAssignee, setIncidentActionAssignee] = useState('');
+  const [incidentActionError, setIncidentActionError] = useState('');
+  const [isSubmittingIncidentAction, setIsSubmittingIncidentAction] = useState(false);
+  const [editingIncident, setEditingIncident] = useState(null);
+  const [shakeMaintenanceForm, setShakeMaintenanceForm] = useState(false);
+  const [shakeIncidentForm, setShakeIncidentForm] = useState(false);
+  const [shakeChangeForm, setShakeChangeForm] = useState(false);
   
   // Change request creation states
   const [changeForm, setChangeForm] = useState({
@@ -54,12 +92,11 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     requestedBy: '',
     requestedByEmail: '',
     assignedTo: '',
-    assignmentGroup: '',
     scheduledStart: '',
     scheduledEnd: '',
-    estimatedDuration: '2 hours',
+    estimatedDuration: '',
     businessJustification: '',
-    riskAssessment: 'Low',
+    riskAssessment: '',
     implementationPlan: '',
     rollbackPlan: '',
     testingPlan: '',
@@ -67,6 +104,173 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   });
   const [changeFormErrors, setChangeFormErrors] = useState({});
   const [isSubmittingChange, setIsSubmittingChange] = useState(false);
+  const [changeSubmitError, setChangeSubmitError] = useState('');
+  const [editingChange, setEditingChange] = useState(null);
+
+  const formatEstimatedDuration = (scheduledStart, scheduledEnd) => {
+    if (!scheduledStart || !scheduledEnd) return '';
+
+    const startDate = new Date(scheduledStart);
+    const endDate = new Date(scheduledEnd);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
+      return '';
+    }
+
+    const totalMinutes = Math.round((endDate - startDate) / (1000 * 60));
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    const parts = [];
+
+    if (days > 0) parts.push(`${days} day${days > 1 ? 's' : ''}`);
+    if (hours > 0) parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+    if (minutes > 0) parts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
+
+    return parts.join(' ') || '0 minutes';
+  };
+
+  const formatDateTimeForInput = (value) => {
+    if (!value) return '';
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  const formatDateForInput = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Compute before/after diff for edit log — compares original DB object vs current form state.
+  // Only fields that actually changed are included.
+  const computeIncidentEditChanges = (original, form) => {
+    const changes = [];
+    const text = (field, label, orig, curr) => {
+      const o = String(orig || '').trim();
+      const n = String(curr || '').trim();
+      if (o !== n) changes.push({ field, label, from: o || '(empty)', to: n || '(empty)' });
+    };
+    text('shortDescription', 'Short Description', original.shortDescription, form.shortDescription);
+    text('description', 'Description', original.description, form.description);
+    text('priority', 'Priority', original.priority, form.priority);
+    text('urgency', 'Urgency', original.urgency, form.urgency);
+    text('impact', 'Impact', original.impact, form.impact);
+    text('category', 'Category', original.category, form.category);
+    text('subcategory', 'Subcategory', original.subcategory, form.subcategory);
+    text('caller', 'Caller Name', original.caller, form.caller);
+    text('callerEmail', 'Caller Email', original.callerEmail, form.callerEmail);
+    // Assignee: compare IDs, display names
+    const origId = typeof original.assignedTo === 'object' ? String(original.assignedTo?._id || '') : String(original.assignedTo || '');
+    const newId = form.assignedTo || '';
+    if (origId !== newId) {
+      const origName = original.assignedToName || 'Unassigned';
+      const newAdmin = adminUsers.find(a => String(a._id) === newId);
+      const newName = newId ? (newAdmin?.username || newAdmin?.name || 'Unknown') : 'Unassigned';
+      changes.push({ field: 'assignedTo', label: 'Assigned To', from: origName, to: newName });
+    }
+    return changes;
+  };
+
+  const computeCREditChanges = (original, form) => {
+    const changes = [];
+    const text = (field, label, orig, curr) => {
+      const o = String(orig || '').trim();
+      const n = String(curr || '').trim();
+      if (o !== n) changes.push({ field, label, from: o || '(empty)', to: n || '(empty)' });
+    };
+    text('shortDescription', 'Short Description', original.shortDescription, form.shortDescription);
+    text('description', 'Description', original.description, form.description);
+    text('priority', 'Priority', original.priority, form.priority);
+    text('category', 'Category', original.category, form.category);
+    text('subcategory', 'Subcategory', original.subcategory, form.subcategory);
+    text('riskAssessment', 'Risk Level', original.riskAssessment, form.riskAssessment);
+    text('businessJustification', 'Business Justification', original.businessJustification, form.businessJustification);
+    text('implementationPlan', 'Implementation Plan', original.implementationPlan, form.implementationPlan);
+    text('rollbackPlan', 'Rollback Plan', original.rollbackPlan, form.rollbackPlan);
+    // testingNotes in DB → testingPlan in form
+    text('testingNotes', 'Testing Plan', original.testingNotes, form.testingPlan);
+    // implementationNotes in DB → communicationPlan in form
+    text('implementationNotes', 'Communication Plan', original.implementationNotes, form.communicationPlan);
+    // Dates: use the same local-time format used to populate the input
+    const origStart = formatDateTimeForInput(original.scheduledStart);
+    const origEnd = formatDateTimeForInput(original.scheduledEnd);
+    if (origStart !== (form.scheduledStart || '')) {
+      changes.push({ field: 'scheduledStart', label: 'Scheduled Start', from: origStart || '(empty)', to: form.scheduledStart || '(empty)' });
+    }
+    if (origEnd !== (form.scheduledEnd || '')) {
+      changes.push({ field: 'scheduledEnd', label: 'Scheduled End', from: origEnd || '(empty)', to: form.scheduledEnd || '(empty)' });
+    }
+    // Assignee
+    const origId = typeof original.assignedTo === 'object' ? String(original.assignedTo?._id || '') : String(original.assignedTo || '');
+    const newId = form.assignedTo || '';
+    if (origId !== newId) {
+      const origName = original.assignedToName || 'Unassigned';
+      const newAdmin = adminUsers.find(a => String(a._id) === newId);
+      const newName = newId ? (newAdmin?.username || newAdmin?.name || 'Unknown') : 'Unassigned';
+      changes.push({ field: 'assignedTo', label: 'Assigned To', from: origName, to: newName });
+    }
+    return changes;
+  };
+
+  const computeMaintenanceEditChanges = (original, form) => {
+    const changes = [];
+    const text = (field, label, orig, curr) => {
+      const o = String(orig || '').trim();
+      const n = String(curr || '').trim();
+      if (o !== n) changes.push({ field, label, from: o || '(empty)', to: n || '(empty)' });
+    };
+    text('title', 'Title', original.title, form.title);
+    text('description', 'Description', original.description, form.description);
+    text('type', 'Type', original.type, form.type);
+    text('priority', 'Priority', original.priority, form.priority);
+    text('category', 'Category', original.category, form.category);
+    text('impactLevel', 'Impact Level', original.impactLevel, form.impactLevel);
+    text('riskLevel', 'Risk Level', original.riskLevel, form.riskLevel);
+    text('rollbackPlan', 'Rollback Plan', original.rollbackPlan, form.rollbackPlan);
+    text('scheduledStartTime', 'Start Time', original.scheduledStartTime, form.scheduledStartTime);
+    text('scheduledEndTime', 'End Time', original.scheduledEndTime, form.scheduledEndTime);
+    // Date: use same local-time format as openMaintenanceEditModal
+    const origDate = formatDateForInput(original.scheduledDate);
+    if (origDate !== (form.scheduledDate || '')) {
+      changes.push({ field: 'scheduledDate', label: 'Scheduled Date', from: origDate || '(empty)', to: form.scheduledDate || '(empty)' });
+    }
+    return changes;
+  };
+
+  const getNow = () => new Date();
+
+  const getDefaultAssignmentGroup = (category) => {
+    switch (category) {
+      case 'Infrastructure':
+      case 'Hardware':
+        return 'Infrastructure';
+      case 'Security':
+        return 'Security';
+      case 'Network':
+        return 'Network';
+      case 'Application':
+      case 'Database':
+      case 'Configuration':
+      case 'Process':
+        return 'Application Development';
+      default:
+        return 'Other';
+    }
+  };
 
   // Maintenance creation states
   const [maintenanceForm, setMaintenanceForm] = useState({
@@ -75,12 +279,9 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     type: 'Scheduled',
     priority: '3 - Medium',
     category: '',
-    assignedTo: '',
-    assignmentGroup: '',
     scheduledDate: '',
     scheduledStartTime: '',
     scheduledEndTime: '',
-    estimatedDuration: '',
     isRecurring: false,
     recurrencePattern: 'Monthly',
     recurrenceInterval: 1,
@@ -98,6 +299,8 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   });
   const [maintenanceFormErrors, setMaintenanceFormErrors] = useState({});
   const [isSubmittingMaintenance, setIsSubmittingMaintenance] = useState(false);
+  const [maintenanceSubmitError, setMaintenanceSubmitError] = useState('');
+  const [editingMaintenance, setEditingMaintenance] = useState(null);
 
   // Helper function to check if admin token is valid
   const isValidAdminToken = (token) => {
@@ -112,10 +315,52 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   const clearInvalidAdminToken = () => {
     const adminToken = localStorage.getItem('adminToken');
     if (!isValidAdminToken(adminToken)) {
-      console.log('🧹 Clearing invalid admin token');
       localStorage.removeItem('adminToken');
       localStorage.removeItem('adminData');
     }
+  };
+
+  const getApiErrorMessage = (error, fallbackMessage) => {
+    const responseData = error?.response?.data;
+    return (
+      responseData?.message ||
+      responseData?.error?.message ||
+      error?.message ||
+      fallbackMessage
+    );
+  };
+
+  const getCurrentAdminId = () => currentAdmin?._id || currentAdmin?.id || null;
+
+  const isSameAdminId = (left, right) => {
+    if (!left || !right) return false;
+    return String(left) === String(right);
+  };
+
+  const getOwnerAdminId = (item, kind) => {
+    if (!item) return null;
+
+    if (kind === 'incident') {
+      return typeof item.openedBy === 'object' ? item.openedBy?._id : item.openedBy;
+    }
+
+    if (kind === 'change') {
+      return typeof item.requestedBy === 'object' ? item.requestedBy?._id : item.requestedBy;
+    }
+
+    return typeof item.createdBy === 'object' ? item.createdBy?._id : item.createdBy;
+  };
+
+  const canEditIncident = (ticket) => {
+    return ticket?.state === 'New' && isSameAdminId(getOwnerAdminId(ticket, 'incident'), getCurrentAdminId());
+  };
+
+  const canEditChangeRequest = (changeRequest) => {
+    return ['New', 'Scheduled'].includes(changeRequest?.state) && isSameAdminId(getOwnerAdminId(changeRequest, 'change'), getCurrentAdminId());
+  };
+
+  const canEditMaintenanceTask = (maintenance) => {
+    return getMaintenanceDisplayStatus(maintenance) === 'Scheduled' && isSameAdminId(getOwnerAdminId(maintenance, 'maintenance'), getCurrentAdminId());
   };
 
   // Fetch admin users for assignment
@@ -127,39 +372,19 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         
         // Check if admin is logged in
         const adminToken = localStorage.getItem('adminToken');
-        console.log('🔍 fetchAdminUsers - Admin token exists:', !!adminToken);
-        console.log('🔍 fetchAdminUsers - Admin token value:', adminToken);
-        console.log('🔍 fetchAdminUsers - Admin token length:', adminToken ? adminToken.length : 0);
         
         if (!isValidAdminToken(adminToken)) {
-          console.log('✅ No valid admin token found, using sample data');
-          const sampleAdmins = [
-            { _id: 'admin1', name: 'John Admin', role: 'IT Manager', email: 'john.admin@parliament.gov' },
-            { _id: 'admin2', name: 'Sarah Tech', role: 'Senior Developer', email: 'sarah.tech@parliament.gov' },
-            { _id: 'admin3', name: 'Mike Support', role: 'Support Specialist', email: 'mike.support@parliament.gov' },
-            { _id: 'admin4', name: 'Lisa Security', role: 'Security Admin', email: 'lisa.security@parliament.gov' },
-            { _id: 'admin5', name: 'David DevOps', role: 'DevOps Engineer', email: 'david.devops@parliament.gov' }
-          ];
-          setAdminUsers(sampleAdmins);
+          // No valid admin session - do not show fake admin users
+          setAdminUsers([]);
           return;
         } else {
-          // Admin token exists, make API call
-          console.log('🚀 Making API call to getAdminUsers');
           const response = await adminApi.getAdminUsers();
-          console.log('✅ API call successful, response:', response.data);
-          setAdminUsers(response.data);
+          setAdminUsers(Array.isArray(response.data) ? response.data : []);
         }
       } catch (error) {
         console.error('Error fetching admin users:', error);
-        // Fallback to sample data if API fails
-        const sampleAdmins = [
-          { _id: 'admin1', name: 'John Admin', role: 'IT Manager', email: 'john.admin@parliament.gov' },
-          { _id: 'admin2', name: 'Sarah Tech', role: 'Senior Developer', email: 'sarah.tech@parliament.gov' },
-          { _id: 'admin3', name: 'Mike Support', role: 'Support Specialist', email: 'mike.support@parliament.gov' },
-          { _id: 'admin4', name: 'Lisa Security', role: 'Security Admin', email: 'lisa.security@parliament.gov' },
-          { _id: 'admin5', name: 'David DevOps', role: 'DevOps Engineer', email: 'david.devops@parliament.gov' }
-        ];
-        setAdminUsers(sampleAdmins);
+        // Fallback: no admin users data instead of sample data
+        setAdminUsers([]);
       }
     };
 
@@ -176,12 +401,12 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       
       // Check if admin is logged in
       const adminToken = localStorage.getItem('adminToken');
-      console.log('🔍 fetchIncidents - Admin token exists:', !!adminToken);
-      console.log('🔍 fetchIncidents - Admin token value:', adminToken);
-      console.log('🔍 fetchIncidents - Admin token length:', adminToken ? adminToken.length : 0);
       
       if (!isValidAdminToken(adminToken)) {
-        console.log('✅ No valid admin token found, using sample data for incidents');
+        // No valid admin session - do not show fake incidents
+        setTickets([]);
+        setTotalPages(0);
+        return;
         // Use sample data when not logged in
         const sampleTickets = [
           {
@@ -298,14 +523,16 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
           filterAssignee
         };
 
-        console.log('🚀 Making API call to getAllIncidents with params:', params);
         const response = await adminApi.getAllIncidents(params);
-        console.log('✅ API call successful, response:', response.data);
         setTickets(response.data.incidents);
         setTotalPages(response.data.pagination.totalPages);
       }
     } catch (error) {
       console.error('Error fetching incidents:', error);
+      // Fallback: show no incidents instead of sample data
+      setTickets([]);
+      setTotalPages(0);
+      return;
       // Fallback to sample data if API fails
       const sampleTickets = [
       {
@@ -492,7 +719,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         scheduledEnd: '2024-01-20T04:00:00Z',
         actualStart: null,
         actualEnd: null,
-        estimatedDuration: '2 hours',
+        estimatedDuration: '',
         actualDuration: null,
         businessJustification: 'Routine monthly maintenance to ensure optimal database performance',
         riskAssessment: 'Low - Scheduled during low usage hours',
@@ -551,9 +778,6 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       
       // Check if admin is logged in
       const adminToken = localStorage.getItem('adminToken');
-      console.log('🔍 fetchChangeRequests - Admin token exists:', !!adminToken);
-      console.log('🔍 fetchChangeRequests - Admin token value:', adminToken);
-      console.log('🔍 fetchChangeRequests - Admin token length:', adminToken ? adminToken.length : 0);
       
       if (isValidAdminToken(adminToken)) {
         // Admin token exists, make API call
@@ -563,34 +787,35 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
           sortBy,
           sortOrder,
           searchTerm,
-          filterState: filterStatus,
           filterPriority,
           filterAssignee
         };
 
-        console.log('🚀 Making API call to getAllChangeRequests with params:', params);
         const response = await adminApi.getAllChangeRequests(params);
-        console.log('✅ API call successful, response:', response.data);
         setMaintenanceTasks(response.data.changeRequests);
+        setTotalPages(response.data.pagination?.totalPages || 1);
       } else {
         // No valid token; do not populate with samples
         setMaintenanceTasks([]);
+        setTotalPages(0);
       }
     } catch (error) {
       console.error('Error fetching change requests:', error);
       // On error, do not populate with samples
       setMaintenanceTasks([]);
+      setTotalPages(0);
     } finally {
       setLoading(false);
     }
-  }, [currentPage, sortBy, sortOrder, searchTerm, filterStatus, filterPriority, filterAssignee]);
+  }, [currentPage, sortBy, sortOrder, searchTerm, filterPriority, filterAssignee]);
 
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filterStatus, filterPriority, filterAssignee, sortBy, sortOrder]);
 
-  // Load data when component mounts or filters change
+
+  // Load data when component mounts or tab changes
   useEffect(() => {
     if (activeTab === 'incidents') {
       fetchIncidents();
@@ -599,7 +824,36 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     } else if (activeTab === 'maintenance') {
       fetchScheduledMaintenance();
     }
-  }, [activeTab, fetchIncidents, fetchChangeRequests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Reload data when filters change (for incidents and changes tabs)
+  useEffect(() => {
+    if (activeTab === 'incidents') {
+      fetchIncidents();
+    } else if (activeTab === 'changes') {
+      fetchChangeRequests();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, sortBy, sortOrder, searchTerm, filterStatus, filterPriority, filterAssignee]);
+
+  // Close assignee dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isAssigneeDropdownOpen && assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(event.target)) {
+        setIsAssigneeDropdownOpen(false);
+        setAssigneeSearchTerm('');
+      }
+    };
+
+    if (isAssigneeDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAssigneeDropdownOpen]);
 
   // Fetch scheduled maintenance data
   const fetchScheduledMaintenance = useCallback(async () => {
@@ -613,8 +867,6 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       const adminToken = localStorage.getItem('adminToken');
       
       if (!isValidAdminToken(adminToken)) {
-        console.log('✅ No valid admin token found, using sample data for scheduled maintenance');
-        // Use sample data when not logged in
         const sampleScheduledMaintenance = [
           {
             _id: 'MAINT001',
@@ -704,28 +956,8 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       }
     } catch (error) {
       console.error('Error fetching scheduled maintenance:', error);
-      // Fallback to sample data if API fails
-      const sampleScheduledMaintenance = [
-        {
-          _id: 'MAINT001',
-          title: 'Database Optimization',
-          description: 'Monthly database optimization and cleanup',
-          type: 'Recurring',
-          frequency: 'Monthly',
-          scheduledDate: '2024-01-20T02:00:00Z',
-          estimatedDuration: '2 hours',
-          assignedTo: 'admin5',
-          assignedToName: 'David DevOps',
-          status: 'Scheduled',
-          priority: 'Medium',
-          category: 'Database',
-          lastExecuted: '2023-12-20T02:00:00Z',
-          nextExecution: '2024-01-20T02:00:00Z',
-          createdAt: '2023-12-15T09:00:00Z',
-          updatedAt: '2024-01-15T09:00:00Z'
-        }
-      ];
-      setScheduledMaintenance(sampleScheduledMaintenance);
+      // Fallback: no scheduled maintenance data instead of sample data
+      setScheduledMaintenance([]);
     } finally {
       setLoading(false);
     }
@@ -768,36 +1000,267 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   const filteredTickets = tickets;
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+    return new Date(dateString).toLocaleString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      timeZone: 'Asia/Kuala_Lumpur'
     });
   };
 
-  const handleStateChange = async (ticketId, newState) => {
+  const formatDateOnly = (dateString) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'Asia/Kuala_Lumpur'
+    });
+  };
+
+  const formatTime12Hour = (timeString) => {
+    if (!timeString) return '';
+    const [hours = '0', minutes = '00'] = timeString.split(':');
+    const d = new Date();
+    d.setHours(Number(hours), Number(minutes), 0, 0);
+    return d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  const buildMaintenanceWindow = (scheduledDate, startTime, endTime) => {
+    if (!scheduledDate) return null;
+    const dateOnly = new Date(scheduledDate).toISOString().slice(0, 10);
+    const startDt = new Date(`${dateOnly}T${startTime || '00:00'}:00+08:00`);
+    let endDt = new Date(`${dateOnly}T${endTime || '23:59'}:00+08:00`);
+    if (endDt <= startDt) {
+      endDt = new Date(endDt.getTime() + 24 * 60 * 60 * 1000);
+    }
+    return { startDt, endDt };
+  };
+
+  const getMaintenanceDisplayStatus = useCallback((maintenance) => {
+    if (!maintenance) return 'Scheduled';
+    if (maintenance.status === 'Cancelled' || maintenance.status === 'Failed') {
+      return maintenance.status;
+    }
+    if (maintenance.status === 'Completed') {
+      return 'Completed';
+    }
+
+    const window = buildMaintenanceWindow(
+      maintenance.scheduledDate,
+      maintenance.scheduledStartTime,
+      maintenance.scheduledEndTime
+    );
+
+    if (!window) {
+      return maintenance.status || 'Scheduled';
+    }
+
+    if (maintenanceNow < window.startDt.getTime()) {
+      return 'Scheduled';
+    }
+
+    if (maintenanceNow <= window.endDt.getTime()) {
+      return 'In Progress';
+    }
+
+    return 'Completed';
+  }, [maintenanceNow]);
+
+  const maintenanceStats = useMemo(() => {
+    return scheduledMaintenance.reduce((acc, maintenance) => {
+      const status = getMaintenanceDisplayStatus(maintenance);
+      if (status === 'Scheduled') acc.scheduled += 1;
+      if (status === 'In Progress') acc.inProgress += 1;
+      if (status === 'Completed') acc.completed += 1;
+      return acc;
+    }, { scheduled: 0, inProgress: 0, completed: 0 });
+  }, [scheduledMaintenance, getMaintenanceDisplayStatus]);
+
+  const selectedMaintenanceDisplayStatus = selectedMaintenance
+    ? getMaintenanceDisplayStatus(selectedMaintenance)
+    : null;
+
+  const filteredMaintenanceList = useMemo(() => {
+    return scheduledMaintenance.filter((maintenance) => {
+      const displayStatus = getMaintenanceDisplayStatus(maintenance);
+
+      if (displayStatus !== maintenanceListStatusFilter) {
+        return false;
+      }
+
+      if (maintenanceListCategoryFilter !== 'all' && maintenance.category !== maintenanceListCategoryFilter) {
+        return false;
+      }
+
+      if (maintenanceListPriorityFilter !== 'all' && maintenance.priority !== maintenanceListPriorityFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    scheduledMaintenance,
+    getMaintenanceDisplayStatus,
+    maintenanceListStatusFilter,
+    maintenanceListCategoryFilter,
+    maintenanceListPriorityFilter
+  ]);
+
+  const maintenanceListTotalPages = Math.max(1, Math.ceil(filteredMaintenanceList.length / 6));
+  const paginatedMaintenanceList = useMemo(() => {
+    const startIndex = (maintenanceListPage - 1) * 6;
+    return filteredMaintenanceList.slice(startIndex, startIndex + 6);
+  }, [filteredMaintenanceList, maintenanceListPage]);
+
+  const maintenanceCategoryOptions = useMemo(() => {
+    return [...new Set(scheduledMaintenance.map((maintenance) => maintenance.category).filter(Boolean))].sort();
+  }, [scheduledMaintenance]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setMaintenanceNow(Date.now()), 30_000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TECH_SUPPORT_ACTIVE_TAB_KEY, activeTab);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TECH_SUPPORT_MAINTENANCE_VIEW_KEY, maintenanceView);
+    }
+  }, [maintenanceView]);
+
+  useEffect(() => {
+    setMaintenanceListPage(1);
+  }, [maintenanceListStatusFilter, maintenanceListCategoryFilter, maintenanceListPriorityFilter]);
+
+  useEffect(() => {
+    if (maintenanceListPage > maintenanceListTotalPages) {
+      setMaintenanceListPage(maintenanceListTotalPages);
+    }
+  }, [maintenanceListPage, maintenanceListTotalPages]);
+
+  useEffect(() => {
+    if (!selectedTicket) return;
+
+    const refreshedTicket = tickets.find(ticket => ticket._id === selectedTicket._id);
+    if (refreshedTicket && refreshedTicket !== selectedTicket) {
+      setSelectedTicket(refreshedTicket);
+    }
+  }, [tickets, selectedTicket]);
+
+  useEffect(() => {
+    if (!selectedMaintenance) return;
+
+    const source = activeTab === 'changes' ? maintenanceTasks : scheduledMaintenance;
+    const refreshedItem = source.find((item) => item._id === selectedMaintenance._id);
+    if (refreshedItem && refreshedItem !== selectedMaintenance) {
+      setSelectedMaintenance(refreshedItem);
+    }
+  }, [activeTab, maintenanceTasks, scheduledMaintenance, selectedMaintenance]);
+
+  const getTicketAssignedAdminId = (ticket) => {
+    if (!ticket?.assignedTo) return null;
+    return typeof ticket.assignedTo === 'object' ? ticket.assignedTo?._id : ticket.assignedTo;
+  };
+
+  const canCurrentAdminStartIncident = (ticket) => {
+    const assignedAdminId = getTicketAssignedAdminId(ticket);
+    if (!currentAdmin || !assignedAdminId) return false;
+    // Backend profile returns { id, ... } not { _id, ... }
+    const myId = currentAdmin._id || currentAdmin.id;
+    return String(assignedAdminId) === String(myId);
+  };
+
+  const closeIncidentActionModal = () => {
+    setIncidentActionModal(null);
+    setIncidentActionComment('');
+    setIncidentActionAssignee('');
+    setIncidentActionError('');
+  };
+
+  const openIncidentActionModal = (type, ticket) => {
+    setIncidentActionModal({ type, ticket });
+    setIncidentActionComment('');
+    setIncidentActionAssignee(getTicketAssignedAdminId(ticket) || '');
+    setIncidentActionError('');
+  };
+
+  const handleStartWork = async (ticket) => {
     try {
-      await adminApi.updateIncident(ticketId, { state: newState });
-      // Refresh the incidents list
+      if (!canCurrentAdminStartIncident(ticket)) {
+        return;
+      }
+
+      await adminApi.updateIncident(ticket._id, { state: 'In Progress' });
       await fetchIncidents();
     } catch (error) {
       console.error('Error updating incident state:', error);
     }
   };
 
-  const handleAssignTicket = async (ticketId, assigneeId) => {
+  const handleIncidentWorkflowAction = async () => {
+    if (!incidentActionModal?.ticket) return;
+
+    const { type, ticket } = incidentActionModal;
+    if (!canCurrentAdminStartIncident(ticket)) {
+      setIncidentActionError('Only the assigned admin can perform this action.');
+      return;
+    }
+
+    const trimmedComment = incidentActionComment.trim();
+    const payload = {};
+
+    if (type === 'reassign') {
+      if (!incidentActionAssignee) {
+        setIncidentActionError('Please choose the admin to reassign this incident to.');
+        return;
+      }
+      if (String(incidentActionAssignee) === String(getTicketAssignedAdminId(ticket))) {
+        setIncidentActionError('Please choose a different admin for reassignment.');
+        return;
+      }
+      if (!trimmedComment) {
+        setIncidentActionError('A comment is required for reassignment.');
+        return;
+      }
+
+      payload.assignedTo = incidentActionAssignee;
+      payload.comment = trimmedComment;
+    }
+
+    if (type === 'resolve') {
+      if (!trimmedComment) {
+        setIncidentActionError('A comment is required before resolving this incident.');
+        return;
+      }
+
+      payload.state = 'Resolved';
+      payload.comment = trimmedComment;
+      payload.resolutionNotes = trimmedComment;
+    }
+
     try {
-      const assignee = adminUsers.find(admin => admin._id === assigneeId);
-      await adminApi.updateIncident(ticketId, { 
-        assignedTo: assigneeId === 'unassigned' ? null : assigneeId,
-        assignedToName: assignee ? assignee.name : 'Unassigned'
-      });
-      // Refresh the incidents list
+      setIsSubmittingIncidentAction(true);
+      setIncidentActionError('');
+      await adminApi.updateIncident(ticket._id, payload);
       await fetchIncidents();
+      closeIncidentActionModal();
     } catch (error) {
-      console.error('Error assigning ticket:', error);
+      console.error('Error performing incident action:', error);
+      console.error('Incident action response:', error?.response?.data);
+      setIncidentActionError(getApiErrorMessage(error, 'Failed to update incident.'));
+    } finally {
+      setIsSubmittingIncidentAction(false);
     }
   };
 
@@ -808,15 +1271,32 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       await fetchIncidents();
     } catch (error) {
       console.error('Error adding work note:', error);
+      console.error('Add work note response:', error?.response?.data);
     }
   };
 
   // Incident creation functions
   const handleIncidentFormChange = (field, value) => {
-    setIncidentForm(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setIncidentForm(prev => {
+      const updated = {
+        ...prev,
+        [field]: value
+      };
+      
+      // When category changes, clear subcategory
+      if (field === 'category') {
+        updated.subcategory = '';
+        // Clear subcategory error as well
+        if (incidentFormErrors.subcategory) {
+          setIncidentFormErrors(prev => ({
+            ...prev,
+            subcategory: ''
+          }));
+        }
+      }
+      
+      return updated;
+    });
     
     // Clear error for this field when user starts typing
     if (incidentFormErrors[field]) {
@@ -856,75 +1336,45 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       errors.callerEmail = 'Please enter a valid email address';
     }
     
-    if (!incidentForm.assignmentGroup.trim()) {
-      errors.assignmentGroup = 'Assignment group is required';
-    }
-    
     setIncidentFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const handleCreateIncident = async (e) => {
     e.preventDefault();
+    setIncidentSubmitError('');
     
     if (!validateIncidentForm()) {
+      setShakeIncidentForm(true);
+      setTimeout(() => setShakeIncidentForm(false), 500);
       return;
     }
     
     setIsSubmittingIncident(true);
     
     try {
-      const incidentData = {
-        ...incidentForm,
-        state: 'New',
-        openedBy: 'current-admin', // This would be the current admin's ID
-        openedByName: 'Current Admin', // This would be the current admin's name
-        openedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        slaDue: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
-      };
-      
-      // Here you would call the API to create the incident
-      // await adminApi.createIncident(incidentData);
-      
-      // For now, we'll just add it to the local state
-      const newIncident = {
-        _id: `INC${Date.now()}`,
-        number: `INC${Date.now()}`,
-        ...incidentData,
-        assignedToName: incidentData.assignedTo ? 
-          adminUsers.find(admin => admin._id === incidentData.assignedTo)?.name || 'Unassigned' : 
-          'Unassigned',
-        workNotes: [],
-        resolutionNotes: '',
-        isEscalated: false
-      };
-      
-      setTickets(prev => [newIncident, ...prev]);
-      
-      // Reset form
-      setIncidentForm({
-        shortDescription: '',
-        description: '',
-        priority: '3 - Medium',
-        urgency: '3 - Medium',
-        impact: '3 - Medium',
-        category: '',
-        subcategory: '',
-        caller: '',
-        callerEmail: '',
-        assignedTo: '',
-        assignmentGroup: ''
-      });
-      
+      if (editingIncident?._id) {
+        const editChanges = computeIncidentEditChanges(editingIncident, incidentForm);
+        await adminApi.updateIncident(editingIncident._id, { ...incidentForm, editChanges });
+      } else {
+        await adminApi.createIncident(incidentForm);
+      }
+
+      resetIncidentForm();
+      setEditingIncident(null);
       setShowCreateTicket(false);
-      
-      // Show success message (you could add a toast notification here)
-      console.log('Incident created successfully');
+      setIncidentStatusTab('New');
+
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+      } else {
+        await fetchIncidents();
+      }
       
     } catch (error) {
-      console.error('Error creating incident:', error);
-      // Show error message (you could add a toast notification here)
+      console.error(`Error ${editingIncident ? 'updating' : 'creating'} incident:`, error);
+      console.error('Incident response:', error?.response?.data);
+      setIncidentSubmitError(getApiErrorMessage(error, `Failed to ${editingIncident ? 'update' : 'create'} incident. Please try again.`));
     } finally {
       setIsSubmittingIncident(false);
     }
@@ -941,18 +1391,40 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       subcategory: '',
       caller: '',
       callerEmail: '',
-      assignedTo: '',
-      assignmentGroup: ''
+      assignedTo: ''
     });
     setIncidentFormErrors({});
+    setIncidentSubmitError('');
   };
 
   // Change request creation functions
   const handleChangeFormChange = (field, value) => {
-    setChangeForm(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setChangeForm(prev => {
+      const updated = {
+        ...prev,
+        [field]: value
+      };
+      
+      // When category changes, clear subcategory
+      if (field === 'category') {
+        updated.subcategory = '';
+        // Clear subcategory error as well
+        if (changeFormErrors.subcategory) {
+          setChangeFormErrors(prev => ({
+            ...prev,
+            subcategory: ''
+          }));
+        }
+      }
+
+      if (field === 'scheduledStart' || field === 'scheduledEnd') {
+        const nextStart = field === 'scheduledStart' ? value : updated.scheduledStart;
+        const nextEnd = field === 'scheduledEnd' ? value : updated.scheduledEnd;
+        updated.estimatedDuration = formatEstimatedDuration(nextStart, nextEnd);
+      }
+      
+      return updated;
+    });
     
     // Clear error for this field when user starts typing
     if (changeFormErrors[field]) {
@@ -965,6 +1437,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
 
   const validateChangeForm = () => {
     const errors = {};
+    const now = getNow();
     
     if (!changeForm.shortDescription.trim()) {
       errors.shortDescription = 'Short description is required';
@@ -991,9 +1464,13 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     } else if (!/\S+@\S+\.\S+/.test(changeForm.requestedByEmail)) {
       errors.requestedByEmail = 'Please enter a valid email address';
     }
-    
-    if (!changeForm.assignmentGroup.trim()) {
-      errors.assignmentGroup = 'Assignment group is required';
+
+    if (!changeForm.assignedTo) {
+      errors.assignedTo = 'Assigned to is required';
+    }
+
+    if (!changeForm.riskAssessment) {
+      errors.riskAssessment = 'Risk level is required';
     }
     
     if (!changeForm.scheduledStart) {
@@ -1007,8 +1484,23 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     if (changeForm.scheduledStart && changeForm.scheduledEnd) {
       const startDate = new Date(changeForm.scheduledStart);
       const endDate = new Date(changeForm.scheduledEnd);
+      if (startDate < now) {
+        errors.scheduledStart = 'Scheduled start time cannot be earlier than the current time';
+      }
       if (endDate <= startDate) {
         errors.scheduledEnd = 'End time must be after start time';
+      } else if (endDate < now) {
+        errors.scheduledEnd = 'Scheduled end time cannot be earlier than the current time';
+      }
+    } else if (changeForm.scheduledStart) {
+      const startDate = new Date(changeForm.scheduledStart);
+      if (startDate < now) {
+        errors.scheduledStart = 'Scheduled start time cannot be earlier than the current time';
+      }
+    } else if (changeForm.scheduledEnd) {
+      const endDate = new Date(changeForm.scheduledEnd);
+      if (endDate < now) {
+        errors.scheduledEnd = 'Scheduled end time cannot be earlier than the current time';
       }
     }
     
@@ -1030,8 +1522,11 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
 
   const handleCreateChange = async (e) => {
     e.preventDefault();
+    setChangeSubmitError('');
     
     if (!validateChangeForm()) {
+      setShakeChangeForm(true);
+      setTimeout(() => setShakeChangeForm(false), 500);
       return;
     }
     
@@ -1039,63 +1534,50 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     
     try {
       const changeData = {
-        ...changeForm,
-        state: 'New',
-        requestedBy: 'current-admin', // This would be the current admin's ID
-        requestedByName: 'Current Admin', // This would be the current admin's name
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        approvalStatus: 'Pending'
+        shortDescription: changeForm.shortDescription,
+        description: changeForm.description,
+        priority: changeForm.priority,
+        category: changeForm.category,
+        subcategory: changeForm.subcategory,
+        assignmentGroup: getDefaultAssignmentGroup(changeForm.category),
+        scheduledStart: changeForm.scheduledStart,
+        scheduledEnd: changeForm.scheduledEnd,
+        estimatedDuration: changeForm.estimatedDuration,
+        businessJustification: changeForm.businessJustification,
+        riskAssessment: changeForm.riskAssessment,
+        implementationPlan: changeForm.implementationPlan,
+        rollbackPlan: changeForm.rollbackPlan,
+        businessService: 'MyParliament Platform',
+        configurationItems: [],
+        dependencies: []
       };
-      
-      // Here you would call the API to create the change request
-      // await adminApi.createChangeRequest(changeData);
-      
-      // For now, we'll just add it to the local state
-      const newChange = {
-        _id: `CHG${Date.now()}`,
-        number: `CHG${Date.now()}`,
-        ...changeData,
-        assignedToName: changeData.assignedTo ? 
-          adminUsers.find(admin => admin._id === changeData.assignedTo)?.name || 'Unassigned' : 
-          'Unassigned',
-        requestedByName: changeData.requestedBy ? 
-          adminUsers.find(admin => admin._id === changeData.requestedBy)?.name || 'Current Admin' : 
-          'Current Admin'
-      };
-      
-      setMaintenanceTasks(prev => [newChange, ...prev]);
-      
-      // Reset form
-      setChangeForm({
-        shortDescription: '',
-        description: '',
-        priority: '3 - Medium',
-        category: '',
-        subcategory: '',
-        requestedBy: '',
-        requestedByEmail: '',
-        assignedTo: '',
-        assignmentGroup: '',
-        scheduledStart: '',
-        scheduledEnd: '',
-        estimatedDuration: '2 hours',
-        businessJustification: '',
-        riskAssessment: 'Low',
-        implementationPlan: '',
-        rollbackPlan: '',
-        testingPlan: '',
-        communicationPlan: ''
-      });
-      
+
+      if (editingChange?._id) {
+        const editChanges = computeCREditChanges(editingChange, changeForm);
+        await adminApi.updateChangeRequest(editingChange._id, {
+          ...changeData,
+          assignedTo: changeForm.assignedTo || 'unassigned',
+          testingNotes: changeForm.testingPlan,
+          implementationNotes: changeForm.communicationPlan,
+          editChanges
+        });
+      } else {
+        await adminApi.createChangeRequest(changeData);
+      }
+
+      resetChangeForm();
+      setEditingChange(null);
       setShowCreateMaintenance(false);
-      
-      // Show success message (you could add a toast notification here)
-      console.log('Change request created successfully');
+
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+      } else {
+        await fetchChangeRequests();
+      }
       
     } catch (error) {
-      console.error('Error creating change request:', error);
-      // Show error message (you could add a toast notification here)
+      console.error(`Error ${editingChange ? 'updating' : 'creating'} change request:`, error);
+      setChangeSubmitError(error?.response?.data?.message || error?.message || `Failed to ${editingChange ? 'update' : 'create'} change request. Please try again.`);
     } finally {
       setIsSubmittingChange(false);
     }
@@ -1119,6 +1601,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
 
   const validateMaintenanceForm = () => {
     const errors = {};
+    const now = getNow();
     
     if (!maintenanceForm.title.trim()) {
       errors.title = 'Title is required';
@@ -1130,10 +1613,6 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     
     if (!maintenanceForm.category) {
       errors.category = 'Category is required';
-    }
-    
-    if (!maintenanceForm.assignmentGroup) {
-      errors.assignmentGroup = 'Assignment group is required';
     }
     
     if (!maintenanceForm.scheduledDate) {
@@ -1148,17 +1627,18 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       errors.scheduledEndTime = 'End time is required';
     }
     
-    if (!maintenanceForm.estimatedDuration) {
-      errors.estimatedDuration = 'Estimated duration is required';
-    }
-    
     // Validate date and time logic
     if (maintenanceForm.scheduledDate && maintenanceForm.scheduledStartTime && maintenanceForm.scheduledEndTime) {
       const startDateTime = new Date(`${maintenanceForm.scheduledDate}T${maintenanceForm.scheduledStartTime}`);
       const endDateTime = new Date(`${maintenanceForm.scheduledDate}T${maintenanceForm.scheduledEndTime}`);
-      
+
+      if (startDateTime < now) {
+        errors.scheduledStartTime = 'Scheduled start time cannot be earlier than the current time';
+      }
       if (endDateTime <= startDateTime) {
         errors.scheduledEndTime = 'End time must be after start time';
+      } else if (endDateTime < now) {
+        errors.scheduledEndTime = 'Scheduled end time cannot be earlier than the current time';
       }
     }
     
@@ -1170,10 +1650,13 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     e.preventDefault();
     
     if (!validateMaintenanceForm()) {
+      setShakeMaintenanceForm(true);
+      setTimeout(() => setShakeMaintenanceForm(false), 500);
       return;
     }
     
     setIsSubmittingMaintenance(true);
+    setMaintenanceSubmitError('');
     
     try {
       const maintenanceData = {
@@ -1182,12 +1665,9 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         type: maintenanceForm.type,
         priority: maintenanceForm.priority,
         category: maintenanceForm.category,
-        assignedTo: maintenanceForm.assignedTo || undefined,
-        assignmentGroup: maintenanceForm.assignmentGroup,
         scheduledDate: maintenanceForm.scheduledDate,
         scheduledStartTime: maintenanceForm.scheduledStartTime,
         scheduledEndTime: maintenanceForm.scheduledEndTime,
-        estimatedDuration: maintenanceForm.estimatedDuration,
         isRecurring: maintenanceForm.isRecurring,
         recurrencePattern: maintenanceForm.recurrencePattern,
         recurrenceInterval: maintenanceForm.recurrenceInterval,
@@ -1203,50 +1683,36 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         stakeholders: maintenanceForm.stakeholders,
         tags: maintenanceForm.tags
       };
-      
-      // Call the API to create the maintenance task
-      await adminApi.createMaintenanceTask(maintenanceData);
-      
-      // Reset form
-      setMaintenanceForm({
-        title: '',
-        description: '',
-        type: 'Scheduled',
-        priority: '3 - Medium',
-        category: '',
-        assignedTo: '',
-        assignmentGroup: '',
-        scheduledDate: '',
-        scheduledStartTime: '',
-        scheduledEndTime: '',
-        estimatedDuration: '',
-        isRecurring: false,
-        recurrencePattern: 'Monthly',
-        recurrenceInterval: 1,
-        businessService: '',
-        configurationItems: [],
-        dependencies: [],
-        prerequisites: '',
-        rollbackPlan: '',
-        impactLevel: 'Medium',
-        riskLevel: 'Medium',
-        affectedSystems: [],
-        communicationPlan: '',
-        stakeholders: [],
-        tags: []
-      });
-      
+
+      const response = editingMaintenance?._id
+        ? await adminApi.updateMaintenanceTask(editingMaintenance._id, {
+            ...maintenanceData,
+            editChanges: computeMaintenanceEditChanges(editingMaintenance, maintenanceForm)
+          })
+        : await adminApi.createMaintenanceTask(maintenanceData);
+      const createdMaintenance = response?.data;
+
+      // Close immediately on success and reset the form.
       setShowCreateScheduledMaintenance(false);
-      
-      // Refresh maintenance tasks
-      await fetchScheduledMaintenance();
-      
-      // Show success message
-      console.log('Maintenance task created successfully');
+      resetMaintenanceForm();
+      setEditingMaintenance(null);
+      setActiveTab('maintenance');
+
+      // Optimistically add the newly created task so it appears instantly.
+      if (createdMaintenance && createdMaintenance._id) {
+        setScheduledMaintenance((prev) => {
+          const next = [createdMaintenance, ...prev.filter((item) => item._id !== createdMaintenance._id)];
+          return next.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+        });
+      }
+
+      // Then re-fetch to stay in sync with backend-calculated fields.
+      fetchScheduledMaintenance();
       
     } catch (error) {
-      console.error('Error creating maintenance task:', error);
-      // Show error message
+      console.error(`Error ${editingMaintenance ? 'updating' : 'creating'} maintenance task:`, error);
+      const msg = error?.response?.data?.message || error?.message || `Failed to ${editingMaintenance ? 'update' : 'create'} maintenance task. Please try again.`;
+      setMaintenanceSubmitError(msg);
     } finally {
       setIsSubmittingMaintenance(false);
     }
@@ -1259,12 +1725,9 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       type: 'Scheduled',
       priority: '3 - Medium',
       category: '',
-      assignedTo: '',
-      assignmentGroup: '',
       scheduledDate: '',
       scheduledStartTime: '',
       scheduledEndTime: '',
-      estimatedDuration: '',
       isRecurring: false,
       recurrencePattern: 'Monthly',
       recurrenceInterval: 1,
@@ -1293,12 +1756,11 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
       requestedBy: '',
       requestedByEmail: '',
       assignedTo: '',
-      assignmentGroup: '',
       scheduledStart: '',
       scheduledEnd: '',
-      estimatedDuration: '2 hours',
+      estimatedDuration: '',
       businessJustification: '',
-      riskAssessment: 'Low',
+      riskAssessment: '',
       implementationPlan: '',
       rollbackPlan: '',
       testingPlan: '',
@@ -1307,66 +1769,174 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
     setChangeFormErrors({});
   };
 
+  const openIncidentEditModal = (ticket) => {
+    if (!canEditIncident(ticket)) return;
+
+    setSelectedTicket(null);
+    setEditingIncident(ticket);
+    setIncidentForm({
+      shortDescription: ticket.shortDescription || '',
+      description: ticket.description || '',
+      priority: ticket.priority || '3 - Medium',
+      urgency: ticket.urgency || '3 - Medium',
+      impact: ticket.impact || '3 - Medium',
+      category: ticket.category || '',
+      subcategory: ticket.subcategory || '',
+      caller: ticket.caller || '',
+      callerEmail: ticket.callerEmail || '',
+      assignedTo: getTicketAssignedAdminId(ticket) || ''
+    });
+    setIncidentFormErrors({});
+    setIncidentSubmitError('');
+    setShowCreateTicket(true);
+  };
+
+  const openChangeEditModal = (changeRequest) => {
+    if (!canEditChangeRequest(changeRequest)) return;
+
+    setSelectedMaintenance(null);
+    const requestedByName = changeRequest.requestedByName || changeRequest.requestedBy?.username || changeRequest.requestedBy?.name || '';
+    const requestedByEmail = changeRequest.requestedBy?.email || currentAdmin?.email || '';
+
+    setEditingChange(changeRequest);
+    setChangeForm({
+      shortDescription: changeRequest.shortDescription || '',
+      description: changeRequest.description || '',
+      priority: changeRequest.priority || '3 - Medium',
+      category: changeRequest.category || '',
+      subcategory: changeRequest.subcategory || '',
+      requestedBy: requestedByName,
+      requestedByEmail,
+      assignedTo: (typeof changeRequest.assignedTo === 'object' ? changeRequest.assignedTo?._id : changeRequest.assignedTo) || '',
+      scheduledStart: formatDateTimeForInput(changeRequest.scheduledStart),
+      scheduledEnd: formatDateTimeForInput(changeRequest.scheduledEnd),
+      estimatedDuration: changeRequest.estimatedDuration || '',
+      businessJustification: changeRequest.businessJustification || '',
+      riskAssessment: changeRequest.riskAssessment || 'Low',
+      implementationPlan: changeRequest.implementationPlan || '',
+      rollbackPlan: changeRequest.rollbackPlan || '',
+      testingPlan: changeRequest.testingNotes || '',
+      communicationPlan: changeRequest.implementationNotes || ''
+    });
+    setChangeFormErrors({});
+    setChangeSubmitError('');
+    setShowCreateMaintenance(true);
+  };
+
+  const openMaintenanceEditModal = (maintenance) => {
+    if (!canEditMaintenanceTask(maintenance)) return;
+
+    setSelectedMaintenance(null);
+    setEditingMaintenance(maintenance);
+    setMaintenanceForm({
+      title: maintenance.title || '',
+      description: maintenance.description || '',
+      type: maintenance.type || 'Scheduled',
+      priority: maintenance.priority || '3 - Medium',
+      category: maintenance.category || '',
+      scheduledDate: formatDateForInput(maintenance.scheduledDate),
+      scheduledStartTime: maintenance.scheduledStartTime || '',
+      scheduledEndTime: maintenance.scheduledEndTime || '',
+      isRecurring: Boolean(maintenance.isRecurring),
+      recurrencePattern: maintenance.recurrencePattern || 'Monthly',
+      recurrenceInterval: maintenance.recurrenceInterval || 1,
+      businessService: maintenance.businessService || '',
+      configurationItems: maintenance.configurationItems || [],
+      dependencies: maintenance.dependencies || [],
+      prerequisites: maintenance.prerequisites || '',
+      rollbackPlan: maintenance.rollbackPlan || '',
+      impactLevel: maintenance.impactLevel || 'Medium',
+      riskLevel: maintenance.riskLevel || 'Medium',
+      affectedSystems: maintenance.affectedSystems || [],
+      communicationPlan: maintenance.communicationPlan || '',
+      stakeholders: maintenance.stakeholders || [],
+      tags: maintenance.tags || []
+    });
+    setMaintenanceFormErrors({});
+    setMaintenanceSubmitError('');
+    setShowCreateScheduledMaintenance(true);
+  };
+
   const IncidentCard = ({ ticket }) => (
     <div className="bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200">
       <div className="p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <div className="flex items-center space-x-2 mb-2">
-              <h3 className="text-lg font-semibold text-gray-900">{ticket.shortDescription}</h3>
-              <span className={`px-2 py-1 text-xs font-medium rounded-full border ${getStateColor(ticket.state)}`}>
+        <div className="flex flex-col gap-4 mb-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900 break-words">{ticket.shortDescription}</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full border whitespace-nowrap ${getStateColor(ticket.state)}`}>
                 {ticket.state}
               </span>
-              <span className={`px-2 py-1 text-xs font-medium rounded-full border ${getPriorityColor(ticket.priority)}`}>
+              {ticket.editHistory?.length > 0 && (
+                <span className="px-2 py-1 text-xs font-medium rounded-full border border-purple-200 bg-purple-50 text-purple-700 whitespace-nowrap">
+                  Edited
+                </span>
+              )}
+              <span className={`px-2 py-1 text-xs font-medium rounded-full border whitespace-nowrap ${getPriorityColor(ticket.priority)}`}>
                 {ticket.priority}
               </span>
               {ticket.isEscalated && (
-                <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 border border-red-200">
+                <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 border border-red-200 whitespace-nowrap">
                   ESCALATED
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-600 mb-2">{ticket.description}</p>
-            <div className="flex items-center space-x-4 text-sm text-gray-500">
+            <p className="text-sm text-gray-600 mb-2 break-words">{ticket.description}</p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
               <span>#{ticket.number}</span>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <span>Caller: {ticket.caller}</span>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <span>Category: {ticket.category} / {ticket.subcategory}</span>
             </div>
           </div>
         </div>
         
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-gray-500">
-            <p>Opened: {formatDate(ticket.openedAt)}</p>
+            <p>Opened: {formatDate(ticket.openedAt || ticket.createdAt)}</p>
             <p>Assigned to: {ticket.assignedToName}</p>
-            <p>Assignment Group: {ticket.assignmentGroup}</p>
             {ticket.slaDue && (
               <p className={new Date(ticket.slaDue) < new Date() ? 'text-red-600 font-medium' : ''}>
                 SLA Due: {formatDate(ticket.slaDue)}
               </p>
             )}
           </div>
-          <div className="flex space-x-2">
+          <div className="flex flex-col gap-1 sm:items-end">
             <button
               onClick={() => setSelectedTicket(ticket)}
-              className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              className="text-xs py-0.5 block text-left sm:text-right text-blue-600 hover:text-blue-900"
             >
               View Details
             </button>
-            {ticket.state === 'New' && (
+            {canEditIncident(ticket) && (
               <button
-                onClick={() => handleStateChange(ticket._id, 'In Progress')}
-                className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                onClick={() => openIncidentEditModal(ticket)}
+                className="text-xs py-0.5 block text-left sm:text-right text-green-600 hover:text-green-900"
+              >
+                Edit
+              </button>
+            )}
+            {ticket.state === 'New' && canCurrentAdminStartIncident(ticket) && (
+              <button
+                onClick={() => handleStartWork(ticket)}
+                className="text-xs py-0.5 block text-left sm:text-right text-green-600 hover:text-green-900"
               >
                 Start Work
               </button>
             )}
-            {ticket.state === 'In Progress' && (
+            {(ticket.state === 'New' || ticket.state === 'In Progress') && canCurrentAdminStartIncident(ticket) && (
               <button
-                onClick={() => handleStateChange(ticket._id, 'Resolved')}
-                className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                onClick={() => openIncidentActionModal('reassign', ticket)}
+                className="text-xs py-0.5 block text-left sm:text-right text-amber-600 hover:text-amber-900"
+              >
+                Assign to Another Person
+              </button>
+            )}
+            {ticket.state === 'In Progress' && canCurrentAdminStartIncident(ticket) && (
+              <button
+                onClick={() => openIncidentActionModal('resolve', ticket)}
+                className="text-xs py-0.5 block text-left sm:text-right text-gray-600 hover:text-gray-900"
               >
                 Resolve
               </button>
@@ -1378,26 +1948,42 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
   );
 
   const IncidentDetailsModal = ({ ticket, onClose }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-gray-900">Incident Details - {ticket.number}</h2>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 p-4 overflow-y-auto">
+      <div className="min-h-full flex items-center justify-center">
+        <div className="bg-white rounded-2xl max-w-6xl w-full mx-auto border border-gray-200 shadow-xl max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="px-4 sm:px-6 py-4 bg-green-600 rounded-t-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-lg sm:text-xl font-semibold text-white break-words">Incident Details - {ticket.number}</h2>
+                <p className="text-sm text-green-50 break-words">{ticket.shortDescription}</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="text-white/80 hover:text-white shrink-0 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
-        </div>
         
-        <div className="p-6">
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
+              {canEditIncident(ticket) && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => openIncidentEditModal(ticket)}
+                    className="px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                  >
+                    Edit Incident
+                  </button>
+                </div>
+              )}
+
               {/* Description */}
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">Description</h3>
@@ -1414,20 +2000,46 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                     <div key={note.id || `note-${index}`} className="bg-gray-50 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-medium text-gray-900">{note.author}</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-gray-500">{formatDate(note.timestamp)}</span>
-                          {note.isPublic ? (
-                            <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">Public</span>
-                          ) : (
-                            <span className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">Private</span>
-                          )}
-                        </div>
+                        <span className="text-sm text-gray-500">{formatDate(note.timestamp)}</span>
                       </div>
                       <p className="text-gray-700">{note.content}</p>
                     </div>
                   ))}
                 </div>
               </div>
+
+              {ticket.editHistory?.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">Edit Log</h3>
+                  <div className="space-y-3">
+                    {ticket.editHistory
+                      .slice()
+                      .reverse()
+                      .map((entry, index) => (
+                        <div key={`${entry.editedAt || index}-${index}`} className="bg-gray-50 rounded-lg p-4">
+                          <div className="flex items-center justify-between gap-4 mb-2">
+                            <span className="font-medium text-gray-900">{entry.editorName}</span>
+                            <span className="text-sm text-gray-500">{formatDate(entry.editedAt)}</span>
+                          </div>
+                          {entry.changes?.length > 0 ? (
+                            <ul className="space-y-1 mt-1">
+                              {entry.changes.map((change, ci) => (
+                                <li key={ci} className="text-sm flex flex-wrap items-baseline gap-x-1">
+                                  <span className="font-medium text-gray-700 shrink-0">{change.label}:</span>
+                                  <span className="text-gray-400 line-through break-all">{change.from}</span>
+                                  <span className="text-gray-400 shrink-0">→</span>
+                                  <span className="text-gray-900 break-all">{change.to}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-gray-700 text-sm">{entry.summary}</p>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               {/* Resolution Notes */}
               {ticket.resolutionNotes && (
@@ -1475,21 +2087,41 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                 <div className="space-y-3">
                   <div>
                     <label className="text-sm font-medium text-gray-500">Assigned To</label>
-                    <select
-                      value={ticket.assignedTo || ''}
-                      onChange={(e) => handleAssignTicket(ticket._id, e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Unassigned</option>
-                      {adminUsers.map(admin => (
-                        <option key={admin._id} value={admin._id}>{admin.name} ({admin.role})</option>
-                      ))}
-                    </select>
+                    <p className="text-gray-900">{ticket.assignedToName || 'Unassigned'}</p>
                   </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Assignment Group</label>
-                    <p className="text-gray-900">{ticket.assignmentGroup}</p>
-                  </div>
+                  {canCurrentAdminStartIncident(ticket) ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {ticket.state === 'New' && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartWork(ticket)}
+                          className="px-3 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Start Work
+                        </button>
+                      )}
+                      {(ticket.state === 'New' || ticket.state === 'In Progress') && (
+                        <button
+                          type="button"
+                          onClick={() => openIncidentActionModal('reassign', ticket)}
+                          className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+                        >
+                          Assign to Another Person
+                        </button>
+                      )}
+                      {ticket.state === 'In Progress' && (
+                        <button
+                          type="button"
+                          onClick={() => openIncidentActionModal('resolve', ticket)}
+                          className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                        >
+                          Resolve with Comment
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">Only the assigned admin can take action on this incident.</p>
+                  )}
                 </div>
               </div>
 
@@ -1514,7 +2146,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                 <div className="space-y-3">
                   <div>
                     <label className="text-sm font-medium text-gray-500">Opened</label>
-                    <p className="text-gray-900">{formatDate(ticket.openedAt)}</p>
+                    <p className="text-gray-900">{formatDate(ticket.openedAt || ticket.createdAt)}</p>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-500">Last Updated</label>
@@ -1545,64 +2177,128 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
             </div>
           </div>
         </div>
+        </div>
       </div>
     </div>
   );
 
-  return (
-    <div className="space-y-6">
-      {/* ServiceNow-style Header */}
-      <div className="bg-white border border-gray-200 rounded-lg">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Service Management</h1>
-              <p className="text-gray-600">Incident and Change Management System</p>
-              
-              {/* Debug button - remove in production */}
-              <div className="mt-2">
+  const incidentActionModalContent = !incidentActionModal?.ticket
+    ? null
+    : (() => {
+        const { type, ticket } = incidentActionModal;
+        const isReassign = type === 'reassign';
+
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] p-4 overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center">
+              <div className="bg-white rounded-2xl w-full max-w-xl shadow-xl border border-gray-200 max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="px-6 py-4 bg-green-600 rounded-t-2xl">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">
+                      {isReassign ? 'Reassign Incident' : 'Resolve Incident'}
+                    </h2>
+                    <p className="text-sm text-green-50">{ticket.number} - {ticket.shortDescription}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeIncidentActionModal}
+                    className="text-white/80 hover:text-white transition-colors"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1 min-h-0">
+                {isReassign && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Reassign To <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={incidentActionAssignee}
+                      onChange={(e) => setIncidentActionAssignee(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    >
+                      <option value="">Select admin</option>
+                      {adminUsers.map(admin => (
+                        <option key={admin._id} value={admin._id}>
+                          {admin.username} ({admin.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Comment <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={incidentActionComment}
+                    onChange={(e) => setIncidentActionComment(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                    placeholder={isReassign ? 'Explain why this incident is being reassigned' : 'Explain how this incident was resolved'}
+                  />
+                </div>
+
+                {incidentActionError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                    {incidentActionError}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                 <button
-                  onClick={() => {
-                    localStorage.removeItem('adminToken');
-                    localStorage.removeItem('adminData');
-                    console.log('🧹 Cleared admin token for testing');
-                    window.location.reload();
-                  }}
-                  className="px-3 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
+                  type="button"
+                  onClick={closeIncidentActionModal}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                 >
-                  Clear Admin Token (Debug)
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleIncidentWorkflowAction}
+                  disabled={isSubmittingIncidentAction}
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isSubmittingIncidentAction
+                    ? 'Saving...'
+                    : isReassign
+                      ? 'Save Reassignment'
+                      : 'Resolve Incident'}
                 </button>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => setShowCreateTicket(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                <span>New Incident</span>
-              </button>
-              <button
-                onClick={() => setShowCreateMaintenance(true)}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span>New Change</span>
-              </button>
+            </div>
+          </div>
+        );
+      })();
+
+  return (
+    <div className="p-3 sm:p-6 max-w-full overflow-x-hidden space-y-4 sm:space-y-6">
+      {/* ServiceNow-style Header */}
+      <div className="bg-white border border-gray-200 rounded-lg">
+        <div className="px-4 sm:px-6 py-4 border-b border-gray-200">
+          <div className="flex flex-col gap-2">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Service Management</h1>
+              <p className="text-sm sm:text-base text-gray-600">Incident and Change Management System</p>
             </div>
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="px-6">
-          <nav className="flex space-x-8">
+        {/* Tab Navigation - horizontal scroll only, no y-scrollbar */}
+        <div className="px-4 sm:px-6 overflow-x-auto overflow-y-hidden -mx-4 sm:mx-0">
+          <nav className="flex space-x-4 sm:space-x-8 min-w-0 pb-2 -mb-2" aria-label="Technical support tabs">
             <button
               onClick={() => setActiveTab('incidents')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 whitespace-nowrap shrink-0 ${
                 activeTab === 'incidents'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1613,7 +2309,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
             </button>
             <button
               onClick={() => setActiveTab('changes')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 whitespace-nowrap shrink-0 ${
                 activeTab === 'changes'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1624,7 +2320,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
             </button>
             <button
               onClick={() => setActiveTab('maintenance')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 whitespace-nowrap shrink-0 ${
                 activeTab === 'maintenance'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1633,27 +2329,100 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               <span>Maintenance Scheduler</span>
               {PinButton && <PinButton tabId="maintenance" tabName="Maintenance Scheduler" module="Technical Support" />}
             </button>
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
-                activeTab === 'dashboard'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <span>Dashboard</span>
-              {PinButton && <PinButton tabId="dashboard" tabName="Dashboard" module="Technical Support" />}
-            </button>
           </nav>
         </div>
       </div>
 
       {/* Incidents Tab */}
       {activeTab === 'incidents' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Incident Management</h2>
+                <p className="text-sm sm:text-base text-gray-600">Track, triage, and resolve technical incidents</p>
+              </div>
+              <button
+                onClick={() => setShowCreateTicket(true)}
+                className="w-full sm:w-auto px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center space-x-2 text-sm"
+              >
+                <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Create Incident</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mt-4 sm:mt-6">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-blue-100 rounded-lg shrink-0">
+                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">New</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {tickets.filter(t => t.state === 'New').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-yellow-100 rounded-lg shrink-0">
+                    <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">In Progress</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {tickets.filter(t => t.state === 'In Progress').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-green-100 rounded-lg shrink-0">
+                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Resolved</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {tickets.filter(t => t.state === 'Resolved').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-gray-100 rounded-lg shrink-0">
+                    <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Closed</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {tickets.filter(t => t.state === 'Closed').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Filters and Search */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
                 <input
@@ -1692,135 +2461,263 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <option value="4 - Low">4 - Low</option>
                 </select>
               </div>
-              <div>
+              <div className="relative" ref={assigneeDropdownRef}>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
-                <select
-                  value={filterAssignee}
-                  onChange={(e) => setFilterAssignee(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="all">All Assignees</option>
-                  <option value="">Unassigned</option>
-                  {adminUsers.map(admin => (
-                    <option key={admin._id} value={admin._id}>{admin.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">New</p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {tickets.filter(t => t.state === 'New').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center">
-                <div className="p-2 bg-yellow-100 rounded-lg">
-                  <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">In Progress</p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {tickets.filter(t => t.state === 'In Progress').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Resolved</p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {tickets.filter(t => t.state === 'Resolved').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center">
-                <div className="p-2 bg-red-100 rounded-lg">
-                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Escalated</p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {tickets.filter(t => t.isEscalated).length}
-                  </p>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsAssigneeDropdownOpen(!isAssigneeDropdownOpen)}
+                    className="w-full px-3 py-2 text-left border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white flex items-center justify-between"
+                  >
+                    <span className="text-gray-900">
+                      {filterAssignee === '' ? 'Select...' : 
+                       filterAssignee === 'unassigned' ? 'Unassigned' :
+                       adminUsers.find(a => a._id === filterAssignee)?.username || 'Select...'}
+                    </span>
+                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {isAssigneeDropdownOpen && (
+                    <div className="absolute z-[100] w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-hidden">
+                      <div className="p-2 border-b border-gray-200">
+                        <input
+                          type="text"
+                          placeholder="Search admins..."
+                          value={assigneeSearchTerm}
+                          onChange={(e) => setAssigneeSearchTerm(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="overflow-y-auto max-h-48">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFilterAssignee('unassigned');
+                            setIsAssigneeDropdownOpen(false);
+                            setAssigneeSearchTerm('');
+                          }}
+                          className={`w-full px-3 py-2 text-left hover:bg-gray-100 ${filterAssignee === 'unassigned' ? 'bg-blue-50 text-blue-600' : 'text-gray-900'}`}
+                        >
+                          Unassigned
+                        </button>
+                        {adminUsers
+                          .filter(admin => {
+                            const q = (assigneeSearchTerm || '').toLowerCase();
+                            if (!q) return true;
+                            const name = (admin.username || '').toLowerCase();
+                            const email = (admin.email || '').toLowerCase();
+                            return name.includes(q) || email.includes(q);
+                          })
+                          .map(admin => (
+                            <button
+                              key={admin._id}
+                              type="button"
+                              onClick={() => {
+                                setFilterAssignee(admin._id);
+                                setIsAssigneeDropdownOpen(false);
+                                setAssigneeSearchTerm('');
+                              }}
+                              className={`w-full px-3 py-2 text-left hover:bg-gray-100 ${filterAssignee === admin._id ? 'bg-blue-50 text-blue-600' : 'text-gray-900'}`}
+                            >
+                              {admin.username}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Incidents List */}
-          {loading ? (
-            <div className="flex justify-center items-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-2 text-gray-600">Loading incidents...</span>
+          {/* Incoming Incidents Region */}
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg sm:shadow-xl border border-gray-200 overflow-visible">
+            {/* Status Tabs */}
+            <div className="border-b border-gray-200 bg-gray-50 overflow-x-auto overflow-y-hidden">
+              <nav className="flex min-w-max sm:min-w-0 sm:flex">
+                {[
+                  { id: 'New', label: 'New', count: tickets.filter(t => t.state === 'New').length, color: 'blue' },
+                  { id: 'In Progress', label: 'In Progress', count: tickets.filter(t => t.state === 'In Progress').length, color: 'yellow' },
+                  { id: 'Resolved', label: 'Resolved', count: tickets.filter(t => t.state === 'Resolved').length, color: 'green' },
+                  { id: 'Closed', label: 'Closed', count: tickets.filter(t => t.state === 'Closed').length, color: 'gray' }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setIncidentStatusTab(tab.id)}
+                    className={`flex-1 min-w-[80px] sm:min-w-0 px-4 sm:px-6 py-3 sm:py-4 text-sm font-medium transition-all duration-200 shrink-0 ${
+                      incidentStatusTab === tab.id
+                        ? `bg-white text-${tab.color}-600 border-b-2 border-${tab.color}-500`
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center space-x-2">
+                      <span>{tab.label}</span>
+                      {tab.count > 0 && (
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                          incidentStatusTab === tab.id 
+                            ? `bg-${tab.color}-100 text-${tab.color}-700` 
+                            : 'bg-gray-200 text-gray-600'
+                        }`}>
+                          {tab.count}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </nav>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {filteredTickets.map((ticket, index) => (
-                <IncidentCard key={ticket._id || ticket.id || `ticket-${index}`} ticket={ticket} />
-              ))}
-              
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="flex justify-center items-center space-x-2 mt-6">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  <span className="px-3 py-2 text-sm text-gray-700">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
+
+            {/* Incidents List */}
+            <div className="p-4 sm:p-6 overflow-visible">
+              {loading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-600 font-medium">Loading incidents...</p>
+                  </div>
+                </div>
+              ) : filteredTickets.filter(ticket => ticket.state === incidentStatusTab).length > 0 ? (
+                <div className="space-y-4">
+                  {filteredTickets
+                    .filter(ticket => ticket.state === incidentStatusTab)
+                    .map((ticket, index) => (
+                      <IncidentCard key={ticket._id || ticket.id || `ticket-${index}`} ticket={ticket} />
+                    ))}
+                  
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
+                      <button
+                        onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(goToPageInput, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { setCurrentPage(n); setGoToPageInput(''); } }}>
+                        <input type="number" min={1} max={totalPages} value={goToPageInput} onChange={(e) => setGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))} className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center" placeholder={currentPage} aria-label="Page number" />
+                      </form>
+                      <span className="px-2 sm:px-3 py-2 text-sm text-gray-700 whitespace-nowrap">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <button
+                        onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12 sm:py-16">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <p className="text-gray-600 font-medium text-lg mb-2">No {incidentStatusTab} incidents</p>
+                  <p className="text-gray-500 text-sm">There are no incidents with status "{incidentStatusTab}" at the moment.</p>
                 </div>
               )}
             </div>
-          )}
+          </div>
         </div>
       )}
 
       {/* Changes Tab */}
       {activeTab === 'changes' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Change Requests</h2>
+                <p className="text-sm sm:text-base text-gray-600">Plan, review, and monitor system change requests</p>
+              </div>
+              <button
+                onClick={() => setShowCreateMaintenance(true)}
+                className="w-full sm:w-auto px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center space-x-2 text-sm"
+              >
+                <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Create CR</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-4 sm:mt-6">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-gray-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">New</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceTasks.filter((chg) => chg.state === 'New').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-blue-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Scheduled</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceTasks.filter((chg) => chg.state === 'Scheduled').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-yellow-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">In Progress</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceTasks.filter((chg) => chg.state === 'In Progress').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center">
+                  <div className="p-2 bg-green-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Completed</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceTasks.filter((chg) => chg.state === 'Completed').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Filters and Search */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
                 <input
@@ -1830,21 +2727,6 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="all">All States</option>
-                  <option value="New">New</option>
-                  <option value="Scheduled">Scheduled</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Completed">Completed</option>
-                  <option value="Closed">Closed</option>
-                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
@@ -1860,134 +2742,225 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <option value="4 - Low">4 - Low</option>
                 </select>
               </div>
-              <div>
+              <div className="relative" ref={assigneeDropdownRef}>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
-                <select
-                  value={filterAssignee}
-                  onChange={(e) => setFilterAssignee(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="all">All Assignees</option>
-                  <option value="">Unassigned</option>
-                  {adminUsers.map(admin => (
-                    <option key={admin._id} value={admin._id}>{admin.name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsAssigneeDropdownOpen(!isAssigneeDropdownOpen)}
+                    className="w-full px-3 py-2 text-left border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white flex items-center justify-between"
+                  >
+                    <span className="text-gray-900">
+                      {filterAssignee === '' ? 'Select...' : 
+                       filterAssignee === 'unassigned' ? 'Unassigned' :
+                       adminUsers.find(a => a._id === filterAssignee)?.username || 'Select...'}
+                    </span>
+                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {isAssigneeDropdownOpen && (
+                    <div className="absolute z-[100] w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-hidden">
+                      <div className="p-2 border-b border-gray-200">
+                        <input
+                          type="text"
+                          placeholder="Search admins..."
+                          value={assigneeSearchTerm}
+                          onChange={(e) => setAssigneeSearchTerm(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="overflow-y-auto max-h-48">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFilterAssignee('unassigned');
+                            setIsAssigneeDropdownOpen(false);
+                            setAssigneeSearchTerm('');
+                          }}
+                          className={`w-full px-3 py-2 text-left hover:bg-gray-100 ${filterAssignee === 'unassigned' ? 'bg-blue-50 text-blue-600' : 'text-gray-900'}`}
+                        >
+                          Unassigned
+                        </button>
+                        {adminUsers
+                          .filter(admin => {
+                            const q = (assigneeSearchTerm || '').toLowerCase();
+                            if (!q) return true;
+                            const name = (admin.username || '').toLowerCase();
+                            const email = (admin.email || '').toLowerCase();
+                            return name.includes(q) || email.includes(q);
+                          })
+                          .map(admin => (
+                            <button
+                              key={admin._id}
+                              type="button"
+                              onClick={() => {
+                                setFilterAssignee(admin._id);
+                                setIsAssigneeDropdownOpen(false);
+                                setAssigneeSearchTerm('');
+                              }}
+                              className={`w-full px-3 py-2 text-left hover:bg-gray-100 ${filterAssignee === admin._id ? 'bg-blue-50 text-blue-600' : 'text-gray-900'}`}
+                            >
+                              {admin.username}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Sort Controls */}
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-600">
-              Sort by:
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="ml-2 px-2 py-1 border border-gray-300 rounded"
-              >
-                <option value="createdAt">Created</option>
-                <option value="updatedAt">Updated</option>
-                <option value="priority">Priority</option>
-                <option value="scheduledStart">Scheduled Start</option>
-              </select>
-              <select
-                value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value)}
-                className="ml-2 px-2 py-1 border border-gray-300 rounded"
-              >
-                <option value="desc">Desc</option>
-                <option value="asc">Asc</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Changes List */}
+          {/* Change Request List */}
           {loading ? (
             <div className="flex justify-center items-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               <span className="ml-2 text-gray-600">Loading changes...</span>
             </div>
           ) : (
-            <div className="space-y-4">
-              {maintenanceTasks.length === 0 ? (
-                <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-500">
-                  No change requests found.
-                </div>
-              ) : (
-                maintenanceTasks.map((chg) => (
-                  <div key={chg._id} className="bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200">
-                    <div className="p-6">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-3 mb-2">
-                            <h3 className="text-lg font-semibold text-gray-900">{chg.shortDescription}</h3>
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              chg.state === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
-                              chg.state === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
-                              chg.state === 'Completed' ? 'bg-green-100 text-green-800' :
-                              chg.state === 'New' ? 'bg-gray-100 text-gray-800' : 'bg-gray-100 text-gray-800'
-                            }`}>
-                              {chg.state}
-                            </span>
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              chg.priority === '1 - Critical' ? 'bg-red-100 text-red-800' :
-                              chg.priority === '2 - High' ? 'bg-orange-100 text-orange-800' :
-                              chg.priority === '3 - Medium' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
-                            }`}>
-                              {chg.priority}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-600 mb-3 line-clamp-2">{chg.description}</p>
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-500">
-                            <span>#{chg.number}</span>
-                            <span>•</span>
-                            <span>Category: {chg.category}{chg.subcategory ? ` / ${chg.subcategory}` : ''}</span>
-                            <span>•</span>
-                            <span>Assigned to: {chg.assignedToName || 'Unassigned'}</span>
-                            <span>•</span>
-                            <span>Group: {chg.assignmentGroup || '—'}</span>
-                          </div>
-                        </div>
-                        <div className="text-right text-sm text-gray-500">
-                          {chg.scheduledStart && <p>Starts: {formatDate(chg.scheduledStart)}</p>}
-                          {chg.scheduledEnd && <p>Ends: {formatDate(chg.scheduledEnd)}</p>}
-                          <p>Updated: {formatDate(chg.updatedAt || chg.createdAt)}</p>
-                        </div>
+            <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg sm:shadow-xl border border-gray-200 overflow-visible">
+              <div className="border-b border-gray-200 bg-gray-50 overflow-x-auto overflow-y-hidden">
+                <nav className="flex min-w-max sm:min-w-0 sm:flex">
+                  {[
+                    { id: 'New', label: 'New', count: maintenanceTasks.filter((chg) => chg.state === 'New').length, activeClass: 'bg-white text-blue-600 border-b-2 border-blue-500', badgeClass: 'bg-blue-100 text-blue-700' },
+                    { id: 'In Progress', label: 'In Progress', count: maintenanceTasks.filter((chg) => chg.state === 'In Progress').length, activeClass: 'bg-white text-yellow-600 border-b-2 border-yellow-500', badgeClass: 'bg-yellow-100 text-yellow-700' },
+                    { id: 'Completed', label: 'Completed', count: maintenanceTasks.filter((chg) => chg.state === 'Completed').length, activeClass: 'bg-white text-green-600 border-b-2 border-green-500', badgeClass: 'bg-green-100 text-green-700' },
+                    { id: 'Cancelled', label: 'Cancelled', count: maintenanceTasks.filter((chg) => chg.state === 'Cancelled').length, activeClass: 'bg-white text-gray-600 border-b-2 border-gray-500', badgeClass: 'bg-gray-200 text-gray-700' }
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setChangeStatusTab(tab.id)}
+                      className={`flex-1 min-w-[96px] sm:min-w-0 px-4 sm:px-6 py-3 sm:py-4 text-sm font-medium transition-all duration-200 shrink-0 ${
+                        changeStatusTab === tab.id
+                          ? tab.activeClass
+                          : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center space-x-2">
+                        <span>{tab.label}</span>
+                        {tab.count > 0 && (
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            changeStatusTab === tab.id ? tab.badgeClass : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {tab.count}
+                          </span>
+                        )}
                       </div>
-                      <div className="flex items-center justify-end space-x-2">
+                    </button>
+                  ))}
+                </nav>
+              </div>
+
+              <div className="p-4 sm:p-6 overflow-visible">
+                {maintenanceTasks.filter((chg) => chg.state === changeStatusTab).length > 0 ? (
+                  <div className="space-y-4">
+                    {maintenanceTasks
+                      .filter((chg) => chg.state === changeStatusTab)
+                      .map((chg) => (
+                        <div key={chg._id} className="bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200">
+                          <div className="p-4 sm:p-6">
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 sm:space-x-3 mb-2">
+                                  <h3 className="text-lg font-semibold text-gray-900">{chg.shortDescription}</h3>
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                    chg.state === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
+                                    chg.state === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
+                                    chg.state === 'Completed' ? 'bg-green-100 text-green-800' :
+                                    chg.state === 'Failed' ? 'bg-red-100 text-red-800' :
+                                    chg.state === 'Cancelled' ? 'bg-gray-200 text-gray-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {chg.state}
+                                  </span>
+                                  {chg.editHistory?.length > 0 && (
+                                    <span className="px-2 py-1 text-xs font-medium rounded-full border border-purple-200 bg-purple-50 text-purple-700">
+                                      Edited
+                                    </span>
+                                  )}
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                    chg.priority === '1 - Critical' ? 'bg-red-100 text-red-800' :
+                                    chg.priority === '2 - High' ? 'bg-orange-100 text-orange-800' :
+                                    chg.priority === '3 - Medium' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
+                                  }`}>
+                                    {chg.priority}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-3 line-clamp-2">{chg.description}</p>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-500">
+                                  <span>#{chg.number}</span>
+                                  <span>•</span>
+                                  <span className="truncate">Category: {chg.category}{chg.subcategory ? ` / ${chg.subcategory}` : ''}</span>
+                                  <span>•</span>
+                                  <span>Assigned to: {chg.assignedToName || 'Unassigned'}</span>
+                                </div>
+                              </div>
+                              <div className="text-left sm:text-right text-sm text-gray-500 shrink-0">
+                                {chg.scheduledStart && <p>Starts: {formatDate(chg.scheduledStart)}</p>}
+                                {chg.scheduledEnd && <p>Ends: {formatDate(chg.scheduledEnd)}</p>}
+                                <p>Updated: {formatDate(chg.updatedAt || chg.createdAt)}</p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-0">
+                              <button
+                                onClick={() => setSelectedMaintenance(chg)}
+                                className="text-xs py-0.5 block text-right text-blue-600 hover:text-blue-900"
+                              >
+                                View Details
+                              </button>
+                              {canEditChangeRequest(chg) && (
+                                <button
+                                  onClick={() => openChangeEditModal(chg)}
+                                  className="text-xs py-0.5 block text-right text-green-600 hover:text-green-900"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                    {totalPages > 1 && (
+                      <div className="flex flex-wrap justify-center items-center gap-2 mt-6">
                         <button
-                          onClick={() => setSelectedMaintenance(chg)}
-                          className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          View Details
+                          Previous
+                        </button>
+                        <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(goToPageInput, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { setCurrentPage(n); setGoToPageInput(''); } }}>
+                          <input type="number" min={1} max={totalPages} value={goToPageInput} onChange={(e) => setGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))} className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center" placeholder={currentPage} aria-label="Page number" />
+                        </form>
+                        <span className="px-2 sm:px-3 py-2 text-sm text-gray-700 whitespace-nowrap">
+                          Page {currentPage} of {totalPages}
+                        </span>
+                        <button
+                          onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage === totalPages}
+                          className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Next
                         </button>
                       </div>
-                    </div>
+                    )}
                   </div>
-                ))
-              )}
-              {totalPages > 1 && (
-                <div className="flex justify-center items-center space-x-2 mt-6">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  <span className="px-3 py-2 text-sm text-gray-700">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
+                ) : (
+                  <div className="text-center py-12 sm:py-16">
+                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-600 font-medium text-lg mb-2">No {changeStatusTab} change requests</p>
+                    <p className="text-gray-500 text-sm">There are no change requests with status "{changeStatusTab}" at the moment.</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1995,38 +2968,38 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
 
       {/* Maintenance Scheduler Tab */}
       {activeTab === 'maintenance' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Header with Actions */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">Maintenance Scheduler</h2>
-                <p className="text-gray-600">Schedule and manage system maintenance tasks</p>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Maintenance Scheduler</h2>
+                <p className="text-sm sm:text-base text-gray-600">Schedule and manage system maintenance tasks</p>
               </div>
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setMaintenanceView('calendar')}
-                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1 ${
                       maintenanceView === 'calendar'
-                        ? 'bg-blue-100 text-blue-700'
+                        ? 'bg-green-100 text-green-700'
                         : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    <svg className="w-4 h-4 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                     Calendar
                   </button>
                   <button
                     onClick={() => setMaintenanceView('list')}
-                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1 ${
                       maintenanceView === 'list'
-                        ? 'bg-blue-100 text-blue-700'
+                        ? 'bg-green-100 text-green-700'
                         : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    <svg className="w-4 h-4 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                     </svg>
                     List
@@ -2034,9 +3007,9 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                 </div>
                 <button
                   onClick={() => setShowCreateScheduledMaintenance(true)}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+                  className="w-full sm:w-auto px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center space-x-2 text-sm"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
                   <span>Schedule Maintenance</span>
@@ -2045,66 +3018,48 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="p-2 bg-blue-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-blue-600">Scheduled</p>
-                    <p className="text-2xl font-semibold text-blue-900">
-                      {scheduledMaintenance.filter(m => m.status === 'Scheduled').length}
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Scheduled</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceStats.scheduled}
                     </p>
                   </div>
                 </div>
               </div>
-              
-              <div className="bg-green-50 rounded-lg p-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="p-2 bg-green-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-green-600">Completed</p>
-                    <p className="text-2xl font-semibold text-green-900">
-                      {scheduledMaintenance.filter(m => m.status === 'Completed').length}
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">Completed</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceStats.completed}
                     </p>
                   </div>
                 </div>
               </div>
-              
-              <div className="bg-yellow-50 rounded-lg p-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center">
-                  <div className="p-2 bg-yellow-100 rounded-lg">
-                    <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="p-2 bg-yellow-100 rounded-lg shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-yellow-600">In Progress</p>
-                    <p className="text-2xl font-semibold text-yellow-900">
-                      {scheduledMaintenance.filter(m => m.status === 'In Progress').length}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="bg-purple-50 rounded-lg p-4">
-                <div className="flex items-center">
-                  <div className="p-2 bg-purple-100 rounded-lg">
-                    <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                  </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-purple-600">Recurring</p>
-                    <p className="text-2xl font-semibold text-purple-900">
-                      {scheduledMaintenance.filter(m => m.type === 'Recurring').length}
+                  <div className="ml-3 sm:ml-4 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-500">In Progress</p>
+                    <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                      {maintenanceStats.inProgress}
                     </p>
                   </div>
                 </div>
@@ -2114,24 +3069,24 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
 
           {/* Calendar View */}
           {maintenanceView === 'calendar' && (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-semibold text-gray-900">Maintenance Calendar</h3>
-                <div className="flex items-center space-x-4">
+            <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 overflow-x-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6 min-w-[280px]">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-900">Maintenance Calendar</h3>
+                <div className="flex items-center justify-between sm:justify-end gap-2 sm:space-x-4">
                   <button
                     onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg shrink-0"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
                   </button>
-                  <h4 className="text-lg font-medium text-gray-900">
+                  <h4 className="text-sm sm:text-lg font-medium text-gray-900 whitespace-nowrap">
                     {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                   </h4>
                   <button
                     onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg shrink-0"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -2141,45 +3096,47 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               </div>
               
               {/* Simple Calendar Grid */}
-              <div className="grid grid-cols-7 gap-1 mb-4">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="p-2 text-center text-sm font-medium text-gray-500 bg-gray-50">
-                    {day}
-                  </div>
-                ))}
-                {Array.from({ length: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate() }, (_, i) => {
-                  const day = i + 1;
-                  const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-                  const dayMaintenance = scheduledMaintenance.filter(m => {
-                    const maintenanceDate = new Date(m.scheduledDate);
-                    return maintenanceDate.getDate() === day && 
-                           maintenanceDate.getMonth() === currentDate.getMonth() && 
-                           maintenanceDate.getFullYear() === currentDate.getFullYear();
-                  });
-                  
-                  return (
-                    <div key={day} className="p-2 min-h-[80px] border border-gray-200 bg-white">
-                      <div className="text-sm font-medium text-gray-900 mb-1">{day}</div>
-                      {dayMaintenance.map(maintenance => (
-                        <div
-                          key={maintenance._id}
-                          onClick={() => setSelectedMaintenance(maintenance)}
-                          className="text-xs p-1 mb-1 rounded cursor-pointer hover:opacity-80"
-                          style={{
-                            backgroundColor: maintenance.priority === 'High' ? '#fef2f2' : 
-                                           maintenance.priority === 'Medium' ? '#fefce8' : '#f0f9ff',
-                            color: maintenance.priority === 'High' ? '#dc2626' : 
-                                   maintenance.priority === 'Medium' ? '#d97706' : '#2563eb',
-                            border: `1px solid ${maintenance.priority === 'High' ? '#fecaca' : 
-                                                   maintenance.priority === 'Medium' ? '#fed7aa' : '#bfdbfe'}`
-                          }}
-                        >
-                          {maintenance.title}
-                        </div>
-                      ))}
+              <div className="overflow-x-auto">
+                <div className="grid grid-cols-7 gap-0.5 sm:gap-1 mb-4 min-w-[560px]">
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                    <div key={day} className="p-1 sm:p-2 text-center text-xs sm:text-sm font-medium text-gray-500 bg-gray-50 min-w-[72px]">
+                      {day.slice(0, 2)}
                     </div>
-                  );
-                })}
+                  ))}
+                  {Array.from({ length: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate() }, (_, i) => {
+                    const day = i + 1;
+                    const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+                    const dayMaintenance = scheduledMaintenance.filter(m => {
+                      const maintenanceDate = new Date(m.scheduledDate);
+                      return maintenanceDate.getDate() === day && 
+                             maintenanceDate.getMonth() === currentDate.getMonth() && 
+                             maintenanceDate.getFullYear() === currentDate.getFullYear();
+                    });
+                    
+                    return (
+                      <div key={day} className="p-1 sm:p-2 min-h-[60px] sm:min-h-[80px] border border-gray-200 bg-white min-w-[72px]">
+                        <div className="text-xs sm:text-sm font-medium text-gray-900 mb-1">{day}</div>
+                        {dayMaintenance.map(maintenance => (
+                          <div
+                            key={maintenance._id}
+                            onClick={() => setSelectedMaintenance(maintenance)}
+                            className="text-xs p-1 mb-1 rounded cursor-pointer hover:opacity-80 break-words"
+                            style={{
+                              backgroundColor: maintenance.priority === 'High' ? '#fef2f2' : 
+                                             maintenance.priority === 'Medium' ? '#fefce8' : '#f0fdf4',
+                              color: maintenance.priority === 'High' ? '#dc2626' : 
+                                     maintenance.priority === 'Medium' ? '#d97706' : '#16a34a',
+                              border: `1px solid ${maintenance.priority === 'High' ? '#fecaca' : 
+                                                     maintenance.priority === 'Medium' ? '#fed7aa' : '#bbf7d0'}`
+                            }}
+                          >
+                            {maintenance.title}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -2187,137 +3144,275 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
           {/* List View */}
           {maintenanceView === 'list' && (
             <div className="space-y-4">
+              <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg sm:shadow-xl border border-gray-200 overflow-hidden">
+                <div className="p-4 sm:p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                      <select
+                        value={maintenanceListCategoryFilter}
+                        onChange={(e) => setMaintenanceListCategoryFilter(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      >
+                        <option value="all">All Categories</option>
+                        {maintenanceCategoryOptions.map((category) => (
+                          <option key={category} value={category}>{category}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                      <select
+                        value={maintenanceListPriorityFilter}
+                        onChange={(e) => setMaintenanceListPriorityFilter(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      >
+                        <option value="all">All Priorities</option>
+                        <option value="1 - Critical">1 - Critical</option>
+                        <option value="2 - High">2 - High</option>
+                        <option value="3 - Medium">3 - Medium</option>
+                        <option value="4 - Low">4 - Low</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg sm:shadow-xl border border-gray-200 overflow-hidden">
+                <div className="border-b border-gray-200 bg-gray-50 overflow-x-auto overflow-y-hidden">
+                  <nav className="flex min-w-max sm:min-w-0 sm:flex">
+                    {[
+                      { id: 'Scheduled', label: 'Scheduled', count: scheduledMaintenance.filter((maintenance) => getMaintenanceDisplayStatus(maintenance) === 'Scheduled').length, activeClass: 'bg-white text-blue-600 border-b-2 border-blue-500', badgeClass: 'bg-blue-100 text-blue-700' },
+                      { id: 'In Progress', label: 'In Progress', count: scheduledMaintenance.filter((maintenance) => getMaintenanceDisplayStatus(maintenance) === 'In Progress').length, activeClass: 'bg-white text-yellow-600 border-b-2 border-yellow-500', badgeClass: 'bg-yellow-100 text-yellow-700' },
+                      { id: 'Completed', label: 'Completed', count: scheduledMaintenance.filter((maintenance) => getMaintenanceDisplayStatus(maintenance) === 'Completed').length, activeClass: 'bg-white text-green-600 border-b-2 border-green-500', badgeClass: 'bg-green-100 text-green-700' },
+                      { id: 'Cancelled', label: 'Cancelled', count: scheduledMaintenance.filter((maintenance) => getMaintenanceDisplayStatus(maintenance) === 'Cancelled').length, activeClass: 'bg-white text-gray-600 border-b-2 border-gray-500', badgeClass: 'bg-gray-200 text-gray-700' }
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setMaintenanceListStatusFilter(tab.id)}
+                        className={`flex-1 min-w-[110px] sm:min-w-0 px-4 sm:px-6 py-3 sm:py-4 text-sm font-medium transition-all duration-200 shrink-0 ${
+                          maintenanceListStatusFilter === tab.id
+                            ? tab.activeClass
+                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        <div className="flex items-center justify-center space-x-2">
+                          <span>{tab.label}</span>
+                          {tab.count > 0 && (
+                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                              maintenanceListStatusFilter === tab.id ? tab.badgeClass : 'bg-gray-200 text-gray-600'
+                            }`}>
+                              {tab.count}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </nav>
+                </div>
+
+                <div className="p-4 sm:p-6 overflow-visible">
               {loading ? (
                 <div className="flex justify-center items-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                   <span className="ml-2 text-gray-600">Loading maintenance tasks...</span>
                 </div>
-              ) : scheduledMaintenance.length > 0 ? (
-                scheduledMaintenance.map((maintenance) => (
-                  <div key={maintenance._id} className="bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200">
-                    <div className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-3 mb-2">
-                            <h3 className="text-lg font-semibold text-gray-900">{maintenance.title}</h3>
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              maintenance.status === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
-                              maintenance.status === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
-                              maintenance.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {maintenance.status}
-                            </span>
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              maintenance.priority === '1 - Critical' ? 'bg-red-100 text-red-800' :
-                              maintenance.priority === '2 - High' ? 'bg-orange-100 text-orange-800' :
-                              maintenance.priority === '3 - Medium' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-green-100 text-green-800'
-                            }`}>
-                              {maintenance.priority}
-                            </span>
-                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
-                              {maintenance.type}
-                            </span>
+              ) : filteredMaintenanceList.length > 0 ? (
+                <>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {paginatedMaintenanceList.map((maintenance) => {
+                      const displayStatus = getMaintenanceDisplayStatus(maintenance);
+
+                      return (
+                        <div key={maintenance._id} className="bg-white border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200">
+                          <div className="p-4 sm:p-6">
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 sm:space-x-3 mb-2">
+                                  <h3 className="text-lg font-semibold text-gray-900">{maintenance.title}</h3>
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                    displayStatus === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
+                                    displayStatus === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
+                                    displayStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {displayStatus}
+                                  </span>
+                                  {maintenance.editHistory?.length > 0 && (
+                                    <span className="px-2 py-1 text-xs font-medium rounded-full border border-purple-200 bg-purple-50 text-purple-700">
+                                      Edited
+                                    </span>
+                                  )}
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                    maintenance.priority === '1 - Critical' ? 'bg-red-100 text-red-800' :
+                                    maintenance.priority === '2 - High' ? 'bg-orange-100 text-orange-800' :
+                                    maintenance.priority === '3 - Medium' ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-green-100 text-green-800'
+                                  }`}>
+                                    {maintenance.priority}
+                                  </span>
+                                  <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                                    {maintenance.type}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-3 line-clamp-2 sm:line-clamp-none">{maintenance.description}</p>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
+                                  <span>Category: {maintenance.category}</span>
+                                  <span>•</span>
+                                  <span>Assigned to: {maintenance.assignedToName || 'Unassigned'}</span>
+                                  {maintenance.estimatedDuration && (
+                                    <>
+                                      <span>•</span>
+                                      <span>Duration: {maintenance.estimatedDuration}</span>
+                                    </>
+                                  )}
+                                  {maintenance.isRecurring && (
+                                    <>
+                                      <span>•</span>
+                                      <span>Recurring: {maintenance.recurrencePattern}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <div className="text-sm text-gray-500">
+                                <p>Scheduled: {formatDate(maintenance.scheduledDate)}</p>
+                                {maintenance.scheduledStartTime && maintenance.scheduledEndTime && (
+                                  <p>Time: {maintenance.scheduledStartTime} – {maintenance.scheduledEndTime} <span className="text-xs text-gray-400">MYT</span></p>
+                                )}
+                                {maintenance.nextScheduledDate && (
+                                  <p>Next: {formatDate(maintenance.nextScheduledDate)}</p>
+                                )}
+                              </div>
+                              <div className="flex flex-col items-end gap-0">
+                                <button
+                                  onClick={() => setSelectedMaintenance(maintenance)}
+                                  className="text-xs py-0.5 block text-right text-blue-600 hover:text-blue-900"
+                                >
+                                  View Details
+                                </button>
+                                {canEditMaintenanceTask(maintenance) && (
+                                  <button
+                                    onClick={() => openMaintenanceEditModal(maintenance)}
+                                    className="text-xs py-0.5 block text-right text-green-600 hover:text-green-900"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                {displayStatus === 'Scheduled' && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await adminApi.updateMaintenanceTask(maintenance._id, { 
+                                          status: 'In Progress',
+                                          actualStartTime: new Date().toISOString()
+                                        });
+                                        await fetchScheduledMaintenance();
+                                      } catch (error) {
+                                        console.error('Error starting maintenance:', error);
+                                      }
+                                    }}
+                                    className="text-xs py-0.5 block text-right text-green-600 hover:text-green-900"
+                                  >
+                                    Start
+                                  </button>
+                                )}
+                                {displayStatus === 'In Progress' && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await adminApi.updateMaintenanceTask(maintenance._id, { 
+                                          status: 'Completed',
+                                          actualEndTime: new Date().toISOString()
+                                        });
+                                        await fetchScheduledMaintenance();
+                                      } catch (error) {
+                                        console.error('Error completing maintenance:', error);
+                                      }
+                                    }}
+                                    className="text-xs py-0.5 block text-right text-blue-600 hover:text-blue-900"
+                                  >
+                                    Complete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <p className="text-sm text-gray-600 mb-3">{maintenance.description}</p>
-                          <div className="flex items-center space-x-6 text-sm text-gray-500">
-                            <span>Category: {maintenance.category}</span>
-                            <span>•</span>
-                            <span>Assigned to: {maintenance.assignedToName || 'Unassigned'}</span>
-                            <span>•</span>
-                            <span>Duration: {maintenance.estimatedDuration}</span>
-                            {maintenance.isRecurring && (
-                              <>
-                                <span>•</span>
-                                <span>Recurring: {maintenance.recurrencePattern}</span>
-                              </>
-                            )}
-                          </div>
                         </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-500">
-                          <p>Scheduled: {formatDate(maintenance.scheduledDate)}</p>
-                          {maintenance.scheduledStartTime && maintenance.scheduledEndTime && (
-                            <p>Time: {maintenance.scheduledStartTime} - {maintenance.scheduledEndTime}</p>
-                          )}
-                          {maintenance.nextScheduledDate && (
-                            <p>Next: {formatDate(maintenance.nextScheduledDate)}</p>
-                          )}
-                        </div>
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => setSelectedMaintenance(maintenance)}
-                            className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                          >
-                            View Details
-                          </button>
-                          {maintenance.status === 'Scheduled' && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await adminApi.updateMaintenanceTask(maintenance._id, { 
-                                    status: 'In Progress',
-                                    actualStartTime: new Date().toISOString()
-                                  });
-                                  await fetchScheduledMaintenance();
-                                } catch (error) {
-                                  console.error('Error starting maintenance:', error);
-                                }
-                              }}
-                              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                            >
-                              Start
-                            </button>
-                          )}
-                          {maintenance.status === 'In Progress' && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await adminApi.updateMaintenanceTask(maintenance._id, { 
-                                    status: 'Completed',
-                                    actualEndTime: new Date().toISOString()
-                                  });
-                                  await fetchScheduledMaintenance();
-                                } catch (error) {
-                                  console.error('Error completing maintenance:', error);
-                                }
-                              }}
-                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                            >
-                              Complete
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
-                ))
+
+                <div className="bg-white rounded-lg border border-gray-200 px-4 sm:px-6 py-4">
+                  <div className="flex flex-row items-center justify-between gap-3 flex-nowrap min-w-0">
+                    <div className="text-sm text-gray-700 flex items-center gap-2 flex-shrink-0">
+                      <span>Items:</span>
+                      <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{paginatedMaintenanceList.length}</span>
+                      <span>/</span>
+                      <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{filteredMaintenanceList.length}</span>
+                      <span className="ml-1 whitespace-nowrap">— Page {maintenanceListPage} of {maintenanceListTotalPages}</span>
+                    </div>
+                    <nav className="flex items-center gap-2 flex-nowrap flex-shrink-0">
+                      <button
+                        onClick={() => setMaintenanceListPage((prev) => Math.max(prev - 1, 1))}
+                        disabled={maintenanceListPage === 1}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {maintenanceListTotalPages > 1 && (
+                        <form onSubmit={(e) => {
+                          e.preventDefault();
+                          const n = parseInt(maintenanceGoToPageInput, 10);
+                          if (!isNaN(n) && n >= 1 && n <= maintenanceListTotalPages) {
+                            setMaintenanceListPage(n);
+                            setMaintenanceGoToPageInput('');
+                          }
+                        }}>
+                          <input
+                            type="number"
+                            min={1}
+                            max={maintenanceListTotalPages}
+                            value={maintenanceGoToPageInput}
+                            onChange={(e) => setMaintenanceGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                            className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center"
+                            placeholder={maintenanceListPage}
+                            aria-label="Maintenance list page number"
+                          />
+                        </form>
+                      )}
+                      <button
+                        onClick={() => setMaintenanceListPage((prev) => Math.min(prev + 1, maintenanceListTotalPages))}
+                        disabled={maintenanceListPage === maintenanceListTotalPages}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </nav>
+                  </div>
+                </div>
+                </>
               ) : (
                 <div className="bg-white rounded-lg border border-gray-200 p-6 text-center text-gray-500">
                   <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                   </svg>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No maintenance tasks found</h3>
-                  <p className="text-gray-500">Get started by creating a new maintenance task.</p>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No {maintenanceListStatusFilter} maintenance tasks</h3>
+                  <p className="text-gray-500">There are no maintenance tasks with status "{maintenanceListStatusFilter}" that match the selected filters.</p>
                 </div>
               )}
+                </div>
+              </div>
+
             </div>
           )}
         </div>
       )}
 
-      {/* Dashboard Tab */}
-      {activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Service Management Dashboard</h2>
-            <p className="text-gray-600">Analytics and metrics will be displayed here.</p>
-          </div>
-        </div>
-      )}
 
       {/* Modals */}
       {selectedTicket && (
@@ -2326,17 +3421,30 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
           onClose={() => setSelectedTicket(null)}
         />
       )}
+      {incidentActionModalContent}
 
       {/* Maintenance Details Modal */}
       {selectedMaintenance && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Maintenance Details - {selectedMaintenance.title}</h2>
+        (() => {
+          const isChangeDetails = !!(selectedMaintenance.shortDescription || selectedMaintenance.scheduledStart || selectedMaintenance.scheduledEnd);
+          const detailsTitle = isChangeDetails
+            ? selectedMaintenance.shortDescription || selectedMaintenance.number || 'Change Request'
+            : selectedMaintenance.title || 'Maintenance';
+          const detailsStatus = isChangeDetails
+            ? (selectedMaintenance.state || 'New')
+            : selectedMaintenanceDisplayStatus;
+
+          return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start sm:items-center justify-center z-[9999] p-4 overflow-hidden">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[calc(100vh-2rem)] my-4 sm:my-0 flex flex-col overflow-hidden shadow-xl">
+            <div className="px-4 sm:px-6 py-4 bg-green-600 rounded-t-lg border-b border-green-700 flex-shrink-0">
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-lg sm:text-xl font-semibold text-white break-words">
+                  {isChangeDetails ? 'Change Request Details' : 'Maintenance Details'} - {detailsTitle}
+                </h2>
                 <button
                   onClick={() => setSelectedMaintenance(null)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-white/80 hover:text-white shrink-0 transition-colors"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2345,10 +3453,36 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               </div>
             </div>
             
-            <div className="p-6">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Main Content */}
                 <div className="space-y-6">
+                  {isChangeDetails ? (
+                    canEditChangeRequest(selectedMaintenance) && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openChangeEditModal(selectedMaintenance)}
+                          className="px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                        >
+                          Edit Change Request
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    canEditMaintenanceTask(selectedMaintenance) && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openMaintenanceEditModal(selectedMaintenance)}
+                          className="px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                        >
+                          Edit Maintenance
+                        </button>
+                      </div>
+                    )
+                  )}
+
                   {/* Description */}
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">Description</h3>
@@ -2360,16 +3494,16 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   {/* Status and Priority */}
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">Status & Priority</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium text-gray-500">Status</label>
                         <p className={`mt-1 px-3 py-1 text-sm font-medium rounded-full inline-block ${
-                          selectedMaintenance.status === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
-                          selectedMaintenance.status === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
-                          selectedMaintenance.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                          detailsStatus === 'Scheduled' ? 'bg-blue-100 text-blue-800' :
+                          detailsStatus === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
+                          detailsStatus === 'Completed' ? 'bg-green-100 text-green-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
-                          {selectedMaintenance.status}
+                          {detailsStatus}
                         </p>
                       </div>
                       <div>
@@ -2385,6 +3519,39 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                       </div>
                     </div>
                   </div>
+
+                  {selectedMaintenance.editHistory?.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Edit Log</h3>
+                      <div className="space-y-3">
+                        {selectedMaintenance.editHistory
+                          .slice()
+                          .reverse()
+                          .map((entry, index) => (
+                            <div key={`${entry.editedAt || index}-${index}`} className="bg-gray-50 rounded-lg p-4">
+                              <div className="flex items-center justify-between gap-4 mb-2">
+                                <span className="font-medium text-gray-900">{entry.editorName}</span>
+                                <span className="text-sm text-gray-500">{formatDate(entry.editedAt)}</span>
+                              </div>
+                              {entry.changes?.length > 0 ? (
+                                <ul className="space-y-1 mt-1">
+                                  {entry.changes.map((change, ci) => (
+                                    <li key={ci} className="text-sm flex flex-wrap items-baseline gap-x-1">
+                                      <span className="font-medium text-gray-700 shrink-0">{change.label}:</span>
+                                      <span className="text-gray-400 line-through break-all">{change.from}</span>
+                                      <span className="text-gray-400 shrink-0">→</span>
+                                      <span className="text-gray-900 break-all">{change.to}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="text-gray-700 text-sm">{entry.summary}</p>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Sidebar */}
@@ -2393,38 +3560,25 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">Basic Information</h3>
                     <div className="space-y-3">
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Type</label>
-                        <p className="text-gray-900">{selectedMaintenance.type}</p>
-                      </div>
+                      {!isChangeDetails && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Type</label>
+                          <p className="text-gray-900">{selectedMaintenance.type}</p>
+                        </div>
+                      )}
                       <div>
                         <label className="text-sm font-medium text-gray-500">Category</label>
-                        <p className="text-gray-900">{selectedMaintenance.category}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Recurring</label>
                         <p className="text-gray-900">
-                          {selectedMaintenance.isRecurring ? 
-                            `${selectedMaintenance.recurrencePattern} (every ${selectedMaintenance.recurrenceInterval} ${selectedMaintenance.recurrencePattern.toLowerCase()})` : 
-                            'One-time'
-                          }
+                          {selectedMaintenance.category}
+                          {isChangeDetails && selectedMaintenance.subcategory ? ` / ${selectedMaintenance.subcategory}` : ''}
                         </p>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Estimated Duration</label>
-                        <p className="text-gray-900">{selectedMaintenance.estimatedDuration}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Assignment */}
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Assignment</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Assigned To</label>
-                        <p className="text-gray-900">{selectedMaintenance.assignedToName}</p>
-                      </div>
+                      {isChangeDetails && selectedMaintenance.assignedToName && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Assigned To</label>
+                          <p className="text-gray-900">{selectedMaintenance.assignedToName}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2432,26 +3586,77 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">Schedule</h3>
                     <div className="space-y-3">
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Scheduled Date</label>
-                        <p className="text-gray-900">{formatDate(selectedMaintenance.scheduledDate)}</p>
-                      </div>
-                      {selectedMaintenance.scheduledStartTime && selectedMaintenance.scheduledEndTime && (
+                      {selectedMaintenance.createdAt && (
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Scheduled Time</label>
-                          <p className="text-gray-900">{selectedMaintenance.scheduledStartTime} - {selectedMaintenance.scheduledEndTime}</p>
+                          <label className="text-sm font-medium text-gray-500">Created Date & Time (MYT)</label>
+                          <p className="text-gray-900">
+                            {formatDate(selectedMaintenance.createdAt)}
+                            <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT</span>
+                          </p>
                         </div>
+                      )}
+                      {isChangeDetails ? (
+                        <>
+                          {selectedMaintenance.scheduledStart && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Scheduled Start (MYT)</label>
+                              <p className="text-gray-900">
+                                {formatDate(selectedMaintenance.scheduledStart)}
+                                <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT</span>
+                              </p>
+                            </div>
+                          )}
+                          {selectedMaintenance.scheduledEnd && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Scheduled End (MYT)</label>
+                              <p className="text-gray-900">
+                                {formatDate(selectedMaintenance.scheduledEnd)}
+                                <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT</span>
+                              </p>
+                            </div>
+                          )}
+                          {selectedMaintenance.estimatedDuration && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Estimated Duration</label>
+                              <p className="text-gray-900">{selectedMaintenance.estimatedDuration}</p>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {selectedMaintenance.scheduledDate && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Scheduled Date</label>
+                              <p className="text-gray-900">{formatDateOnly(selectedMaintenance.scheduledDate)}</p>
+                            </div>
+                          )}
+                          {selectedMaintenance.scheduledStartTime && selectedMaintenance.scheduledEndTime && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Scheduled Time (MYT)</label>
+                          <p className="text-gray-900">
+                            {formatTime12Hour(selectedMaintenance.scheduledStartTime)} – {formatTime12Hour(selectedMaintenance.scheduledEndTime)}
+                            <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT (UTC+8)</span>
+                          </p>
+                        </div>
+                          )}
+                        </>
                       )}
                       {selectedMaintenance.actualStartTime && (
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Actual Start</label>
-                          <p className="text-gray-900">{formatDate(selectedMaintenance.actualStartTime)}</p>
+                          <label className="text-sm font-medium text-gray-500">Actual Start (MYT)</label>
+                          <p className="text-gray-900">
+                            {formatDate(selectedMaintenance.actualStartTime)}
+                            <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT</span>
+                          </p>
                         </div>
                       )}
                       {selectedMaintenance.actualEndTime && (
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Actual End</label>
-                          <p className="text-gray-900">{formatDate(selectedMaintenance.actualEndTime)}</p>
+                          <label className="text-sm font-medium text-gray-500">Actual End (MYT)</label>
+                          <p className="text-gray-900">
+                            {formatDate(selectedMaintenance.actualEndTime)}
+                            <span className="ml-1.5 text-xs text-gray-400 font-medium">MYT</span>
+                          </p>
                         </div>
                       )}
                       {selectedMaintenance.nextScheduledDate && (
@@ -2467,18 +3672,25 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
             </div>
           </div>
         </div>
+          );
+        })()
       )}
 
-      {/* Create Maintenance Modal */}
+      {/* Create/Edit Maintenance Modal */}
       {showCreateScheduledMaintenance && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Schedule New Maintenance</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start sm:items-center justify-center z-50 p-4 overflow-hidden">
+          <div className="bg-white rounded-lg max-w-2xl w-full mx-auto max-h-[calc(100vh-2rem)] my-4 sm:my-0 flex flex-col overflow-hidden shadow-xl">
+            <div className="px-4 sm:px-6 py-4 bg-green-600 rounded-t-lg border-b border-green-700 flex-shrink-0">
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-lg sm:text-xl font-semibold text-white">{editingMaintenance ? 'Edit Maintenance' : 'Schedule New Maintenance'}</h2>
                 <button
-                  onClick={() => setShowCreateScheduledMaintenance(false)}
-                  className="text-gray-400 hover:text-gray-600"
+                  onClick={() => {
+                    setShowCreateScheduledMaintenance(false);
+                    setEditingMaintenance(null);
+                    resetMaintenanceForm();
+                    setMaintenanceSubmitError('');
+                  }}
+                  className="text-white/80 hover:text-white transition-colors shrink-0"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2487,8 +3699,8 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               </div>
             </div>
             
-            <div className="p-6">
-              <form onSubmit={handleCreateMaintenance} className="space-y-4">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
+              <form onSubmit={handleCreateMaintenance} className={`space-y-4 ${shakeMaintenanceForm ? 'form-shake' : ''}`}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -2551,7 +3763,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
                     <select 
@@ -2580,84 +3792,24 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                       <option value="4 - Low">4 - Low</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
-                    <select 
-                      value={maintenanceForm.assignedTo}
-                      onChange={(e) => handleMaintenanceFormChange('assignedTo', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Unassigned</option>
-                      {adminUsers.map(admin => (
-                        <option key={admin._id} value={admin._id}>{admin.name} ({admin.role})</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Assignment Group <span className="text-red-500">*</span>
-                    </label>
-                    <select 
-                      value={maintenanceForm.assignmentGroup}
-                      onChange={(e) => handleMaintenanceFormChange('assignmentGroup', e.target.value)}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        maintenanceFormErrors.assignmentGroup ? 'border-red-300' : 'border-gray-300'
-                      }`}
-                    >
-                      <option value="">Select assignment group</option>
-                      <option value="Application Development">Application Development</option>
-                      <option value="IT Support">IT Support</option>
-                      <option value="Infrastructure">Infrastructure</option>
-                      <option value="Security">Security</option>
-                      <option value="Network">Network</option>
-                      <option value="Database">Database</option>
-                      <option value="Other">Other</option>
-                    </select>
-                    {maintenanceFormErrors.assignmentGroup && (
-                      <p className="mt-1 text-sm text-red-600">{maintenanceFormErrors.assignmentGroup}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Estimated Duration</label>
-                    <select 
-                      value={maintenanceForm.estimatedDuration}
-                      onChange={(e) => handleMaintenanceFormChange('estimatedDuration', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select duration</option>
-                      <option value="30 minutes">30 minutes</option>
-                      <option value="1 hour">1 hour</option>
-                      <option value="2 hours">2 hours</option>
-                      <option value="4 hours">4 hours</option>
-                      <option value="8 hours">8 hours</option>
-                      <option value="1 day">1 day</option>
-                    </select>
-                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Scheduled Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={maintenanceForm.scheduledDate}
-                      onChange={(e) => handleMaintenanceFormChange('scheduledDate', e.target.value)}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        maintenanceFormErrors.scheduledDate ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                    <DatePickerField
+                      label="Scheduled Date"
+                      required
+                      value={maintenanceForm.scheduledDate ? new Date(maintenanceForm.scheduledDate + 'T12:00:00') : null}
+                      onChange={(d) => handleMaintenanceFormChange('scheduledDate', d ? d.toISOString().slice(0, 10) : '')}
+                      error={maintenanceFormErrors.scheduledDate}
+                      placeholder="DD/MM/YYYY"
+                      autoComplete="off"
                     />
-                    {maintenanceFormErrors.scheduledDate && (
-                      <p className="mt-1 text-sm text-red-600">{maintenanceFormErrors.scheduledDate}</p>
-                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Start Time <span className="text-red-500">*</span>
+                      <span className="ml-1 text-xs font-normal text-gray-400">(MYT)</span>
                     </label>
                     <input
                       type="time"
@@ -2674,6 +3826,7 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       End Time <span className="text-red-500">*</span>
+                      <span className="ml-1 text-xs font-normal text-gray-400">(MYT)</span>
                     </label>
                     <input
                       type="time"
@@ -2689,26 +3842,34 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   </div>
                 </div>
 
-                <div className="flex justify-end space-x-3 pt-4">
+                {maintenanceSubmitError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                    {maintenanceSubmitError}
+                  </div>
+                )}
+
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-4">
                   <button
                     type="button"
                     onClick={() => {
                       setShowCreateScheduledMaintenance(false);
+                      setEditingMaintenance(null);
                       resetMaintenanceForm();
+                      setMaintenanceSubmitError('');
                     }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                    className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmittingMaintenance}
-                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                    className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                   >
                     {isSubmittingMaintenance && (
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                     )}
-                    <span>{isSubmittingMaintenance ? 'Creating...' : 'Schedule Maintenance'}</span>
+                    <span>{isSubmittingMaintenance ? (editingMaintenance ? 'Saving...' : 'Creating...') : (editingMaintenance ? 'Save Changes' : 'Schedule Maintenance')}</span>
                   </button>
                 </div>
               </form>
@@ -2717,19 +3878,21 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         </div>
       )}
 
-      {/* Create Change Request Modal */}
+      {/* Create/Edit Change Request Modal */}
       {showCreateMaintenance && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-5xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Create New Change Request</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start sm:items-center justify-center z-50 overflow-y-auto p-4">
+          <div className="bg-white rounded-lg max-w-5xl w-full mx-auto max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden my-4 sm:my-0">
+            <div className="px-4 sm:px-6 py-4 bg-green-600 rounded-t-lg flex-shrink-0">
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-lg sm:text-xl font-semibold text-white">{editingChange ? 'Edit Change Request' : 'Create New Change Request'}</h2>
                 <button
                   onClick={() => {
                     setShowCreateMaintenance(false);
+                    setEditingChange(null);
                     resetChangeForm();
+                    setChangeSubmitError('');
                   }}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-white hover:text-gray-200 transition-colors shrink-0"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2738,8 +3901,8 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               </div>
             </div>
             
-            <div className="p-6">
-              <form onSubmit={handleCreateChange} className="space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
+              <form noValidate onSubmit={handleCreateChange} className={`space-y-6 ${shakeChangeForm ? 'form-shake' : ''}`}>
                 {/* Basic Information */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900">Basic Information</h3>
@@ -2833,8 +3996,13 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                       <select
                         value={changeForm.subcategory}
                         onChange={(e) => handleChangeFormChange('subcategory', e.target.value)}
+                        disabled={!changeForm.category || changeForm.category === ''}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           changeFormErrors.subcategory ? 'border-red-300' : 'border-gray-300'
+                        } ${
+                          !changeForm.category || changeForm.category === '' 
+                            ? 'bg-gray-100 cursor-not-allowed opacity-60' 
+                            : ''
                         }`}
                       >
                         <option value="">Select subcategory</option>
@@ -2923,9 +4091,10 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                         type="text"
                         value={changeForm.requestedBy}
                         onChange={(e) => handleChangeFormChange('requestedBy', e.target.value)}
+                        readOnly={Boolean(editingChange)}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           changeFormErrors.requestedBy ? 'border-red-300' : 'border-gray-300'
-                        }`}
+                        } ${editingChange ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         placeholder="Enter requestor's name"
                       />
                       {changeFormErrors.requestedBy && (
@@ -2941,9 +4110,10 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                         type="email"
                         value={changeForm.requestedByEmail}
                         onChange={(e) => handleChangeFormChange('requestedByEmail', e.target.value)}
+                        readOnly={Boolean(editingChange)}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           changeFormErrors.requestedByEmail ? 'border-red-300' : 'border-gray-300'
-                        }`}
+                        } ${editingChange ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         placeholder="Enter requestor's email"
                       />
                       {changeFormErrors.requestedByEmail && (
@@ -2957,45 +4127,29 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900">Assignment</h3>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
-                      <select
-                        value={changeForm.assignedTo}
-                        onChange={(e) => handleChangeFormChange('assignedTo', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      >
-                        <option value="">Unassigned</option>
-                        {adminUsers.map(admin => (
-                          <option key={admin._id} value={admin._id}>{admin.name} ({admin.role})</option>
-                        ))}
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Assignment Group <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={changeForm.assignmentGroup}
-                        onChange={(e) => handleChangeFormChange('assignmentGroup', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          changeFormErrors.assignmentGroup ? 'border-red-300' : 'border-gray-300'
-                        }`}
-                      >
-                        <option value="">Select assignment group</option>
-                        <option value="Change Management">Change Management</option>
-                        <option value="Application Development">Application Development</option>
-                        <option value="Infrastructure">Infrastructure</option>
-                        <option value="Database Team">Database Team</option>
-                        <option value="Security Team">Security Team</option>
-                        <option value="Network Team">Network Team</option>
-                        <option value="IT Operations">IT Operations</option>
-                      </select>
-                      {changeFormErrors.assignmentGroup && (
-                        <p className="mt-1 text-sm text-red-600">{changeFormErrors.assignmentGroup}</p>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Assigned To <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={changeForm.assignedTo}
+                      onChange={(e) => handleChangeFormChange('assignedTo', e.target.value)}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        changeFormErrors.assignedTo ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                    >
+                      <option value="">Select assignee</option>
+                      {adminUsers.length > 0 ? (
+                        adminUsers.map(admin => (
+                          <option key={admin._id} value={admin._id}>{admin.username} ({admin.role})</option>
+                        ))
+                      ) : (
+                        <option value="" disabled>No admin data available</option>
                       )}
-                    </div>
+                    </select>
+                    {changeFormErrors.assignedTo && (
+                      <p className="mt-1 text-sm text-red-600">{changeFormErrors.assignedTo}</p>
+                    )}
                   </div>
                 </div>
 
@@ -3003,36 +4157,73 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900">Schedule</h3>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
                         Scheduled Start <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="datetime-local"
-                        value={changeForm.scheduledStart}
-                        onChange={(e) => handleChangeFormChange('scheduledStart', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          changeFormErrors.scheduledStart ? 'border-red-300' : 'border-gray-300'
-                        }`}
-                      />
+                      <div className="flex flex-col lg:flex-row gap-2 items-stretch lg:items-end">
+                        <div className="flex-1 min-w-0">
+                          <DatePickerField
+                            value={changeForm.scheduledStart ? new Date(changeForm.scheduledStart.slice(0, 10) + 'T12:00:00') : null}
+                            onChange={(d) => {
+                              const dateStr = d ? d.toISOString().slice(0, 10) : '';
+                              const timeStr = changeForm.scheduledStart ? changeForm.scheduledStart.slice(11, 16) : '00:00';
+                              handleChangeFormChange('scheduledStart', dateStr ? dateStr + 'T' + timeStr : '');
+                            }}
+                            error={changeFormErrors.scheduledStart}
+                            placeholder="DD/MM/YYYY"
+                            autoComplete="off"
+                          />
+                        </div>
+                        <input
+                          type="time"
+                          value={changeForm.scheduledStart ? changeForm.scheduledStart.slice(11, 16) : ''}
+                          onChange={(e) => {
+                            const t = e.target.value;
+                            const d = changeForm.scheduledStart ? changeForm.scheduledStart.slice(0, 10) : new Date().toISOString().slice(0, 10);
+                            handleChangeFormChange('scheduledStart', d + 'T' + t);
+                          }}
+                          className={`w-full lg:flex-shrink-0 lg:w-28 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            changeFormErrors.scheduledStart ? 'border-red-300' : 'border-gray-300'
+                          }`}
+                        />
+                      </div>
                       {changeFormErrors.scheduledStart && (
                         <p className="mt-1 text-sm text-red-600">{changeFormErrors.scheduledStart}</p>
                       )}
                     </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
                         Scheduled End <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="datetime-local"
-                        value={changeForm.scheduledEnd}
-                        onChange={(e) => handleChangeFormChange('scheduledEnd', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          changeFormErrors.scheduledEnd ? 'border-red-300' : 'border-gray-300'
-                        }`}
-                      />
+                      <div className="flex flex-col lg:flex-row gap-2 items-stretch lg:items-end">
+                        <div className="flex-1 min-w-0">
+                          <DatePickerField
+                            value={changeForm.scheduledEnd ? new Date(changeForm.scheduledEnd.slice(0, 10) + 'T12:00:00') : null}
+                            onChange={(d) => {
+                              const dateStr = d ? d.toISOString().slice(0, 10) : '';
+                              const timeStr = changeForm.scheduledEnd ? changeForm.scheduledEnd.slice(11, 16) : '00:00';
+                              handleChangeFormChange('scheduledEnd', dateStr ? dateStr + 'T' + timeStr : '');
+                            }}
+                            error={changeFormErrors.scheduledEnd}
+                            placeholder="DD/MM/YYYY"
+                            autoComplete="off"
+                          />
+                        </div>
+                        <input
+                          type="time"
+                          value={changeForm.scheduledEnd ? changeForm.scheduledEnd.slice(11, 16) : ''}
+                          onChange={(e) => {
+                            const t = e.target.value;
+                            const d = changeForm.scheduledEnd ? changeForm.scheduledEnd.slice(0, 10) : new Date().toISOString().slice(0, 10);
+                            handleChangeFormChange('scheduledEnd', d + 'T' + t);
+                          }}
+                          className={`w-full lg:flex-shrink-0 lg:w-28 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            changeFormErrors.scheduledEnd ? 'border-red-300' : 'border-gray-300'
+                          }`}
+                        />
+                      </div>
                       {changeFormErrors.scheduledEnd && (
                         <p className="mt-1 text-sm text-red-600">{changeFormErrors.scheduledEnd}</p>
                       )}
@@ -3040,20 +4231,16 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                     
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Estimated Duration</label>
-                      <select
+                      <input
+                        type="text"
                         value={changeForm.estimatedDuration}
-                        onChange={(e) => handleChangeFormChange('estimatedDuration', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      >
-                        <option value="30 minutes">30 minutes</option>
-                        <option value="1 hour">1 hour</option>
-                        <option value="2 hours">2 hours</option>
-                        <option value="4 hours">4 hours</option>
-                        <option value="8 hours">8 hours</option>
-                        <option value="1 day">1 day</option>
-                        <option value="2 days">2 days</option>
-                        <option value="1 week">1 week</option>
-                      </select>
+                        readOnly
+                        placeholder="Auto calculated from scheduled start and end"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700 cursor-not-allowed"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Auto calculated from scheduled start and end time.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -3063,17 +4250,25 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   <h3 className="text-lg font-semibold text-gray-900">Risk Assessment</h3>
                   
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Risk Level</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Risk Level <span className="text-red-500">*</span>
+                    </label>
                     <select
                       value={changeForm.riskAssessment}
                       onChange={(e) => handleChangeFormChange('riskAssessment', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        changeFormErrors.riskAssessment ? 'border-red-300' : 'border-gray-300'
+                      }`}
                     >
+                      <option value="">Select risk level</option>
                       <option value="Low">Low</option>
                       <option value="Medium">Medium</option>
                       <option value="High">High</option>
                       <option value="Critical">Critical</option>
                     </select>
+                    {changeFormErrors.riskAssessment && (
+                      <p className="mt-1 text-sm text-red-600">{changeFormErrors.riskAssessment}</p>
+                    )}
                   </div>
                 </div>
 
@@ -3167,34 +4362,44 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                   </div>
                 </div>
 
+                {changeSubmitError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                    {changeSubmitError}
+                  </div>
+                )}
+
                 {/* Form Actions */}
-                <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-6 border-t border-gray-200">
                   <button
                     type="button"
                     onClick={() => {
                       setShowCreateMaintenance(false);
+                      setEditingChange(null);
                       resetChangeForm();
+                      setChangeSubmitError('');
                     }}
-                    className="px-6 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                    className="w-full sm:w-auto px-6 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmittingChange}
-                    className="px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                    className="w-full sm:w-auto px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
                   >
                     {isSubmittingChange ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Creating...</span>
+                        <span>{editingChange ? 'Saving...' : 'Creating...'}</span>
                       </>
                     ) : (
                       <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                        <span>Create Change Request</span>
+                        {!editingChange && (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                          </svg>
+                        )}
+                        <span>{editingChange ? 'Save Changes' : 'Create CR'}</span>
                       </>
                     )}
                   </button>
@@ -3205,19 +4410,21 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
         </div>
       )}
 
-      {/* Create Incident Modal */}
+      {/* Create/Edit Incident Modal */}
       {showCreateTicket && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Create New Incident</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start sm:items-center justify-center z-50 overflow-y-auto p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full mx-auto max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden my-4 sm:my-0">
+            <div className="px-4 sm:px-6 py-4 bg-green-600 rounded-t-lg flex-shrink-0">
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-lg sm:text-xl font-semibold text-white">{editingIncident ? 'Edit Incident' : 'Create New Incident'}</h2>
                 <button
                   onClick={() => {
                     setShowCreateTicket(false);
+                    setEditingIncident(null);
                     resetIncidentForm();
+                    setIncidentSubmitError('');
                   }}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-white hover:text-gray-200 transition-colors shrink-0"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -3226,8 +4433,8 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
               </div>
             </div>
             
-            <div className="p-6">
-              <form onSubmit={handleCreateIncident} className="space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
+              <form noValidate onSubmit={handleCreateIncident} className={`space-y-6 ${shakeIncidentForm ? 'form-shake' : ''}`}>
                 {/* Basic Information */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900">Basic Information</h3>
@@ -3356,8 +4563,13 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                       <select
                         value={incidentForm.subcategory}
                         onChange={(e) => handleIncidentFormChange('subcategory', e.target.value)}
+                        disabled={!incidentForm.category || incidentForm.category === ''}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           incidentFormErrors.subcategory ? 'border-red-300' : 'border-gray-300'
+                        } ${
+                          !incidentForm.category || incidentForm.category === '' 
+                            ? 'bg-gray-100 cursor-not-allowed opacity-60' 
+                            : ''
                         }`}
                       >
                         <option value="">Select subcategory</option>
@@ -3489,67 +4701,56 @@ const TechnicalSupport = ({ togglePin, isPinned, PinButton }) => {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       >
                         <option value="">Unassigned</option>
-                        {adminUsers.map(admin => (
-                          <option key={admin._id} value={admin._id}>{admin.name} ({admin.role})</option>
-                        ))}
+                        {adminUsers.length > 0 ? (
+                          adminUsers.map(admin => (
+                            <option key={admin._id} value={admin._id}>{admin.username} ({admin.role})</option>
+                          ))
+                        ) : (
+                          <option value="" disabled>No admin data available</option>
+                        )}
                       </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Assignment Group <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={incidentForm.assignmentGroup}
-                        onChange={(e) => handleIncidentFormChange('assignmentGroup', e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          incidentFormErrors.assignmentGroup ? 'border-red-300' : 'border-gray-300'
-                        }`}
-                      >
-                        <option value="">Select assignment group</option>
-                        <option value="IT Support">IT Support</option>
-                        <option value="Application Development">Application Development</option>
-                        <option value="Database Team">Database Team</option>
-                        <option value="Security Team">Security Team</option>
-                        <option value="Infrastructure">Infrastructure</option>
-                        <option value="Network Team">Network Team</option>
-                        <option value="Help Desk">Help Desk</option>
-                      </select>
-                      {incidentFormErrors.assignmentGroup && (
-                        <p className="mt-1 text-sm text-red-600">{incidentFormErrors.assignmentGroup}</p>
-                      )}
                     </div>
                   </div>
                 </div>
 
+                {incidentSubmitError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                    {incidentSubmitError}
+                  </div>
+                )}
+
                 {/* Form Actions */}
-                <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-6 border-t border-gray-200">
                   <button
                     type="button"
                     onClick={() => {
                       setShowCreateTicket(false);
+                      setEditingIncident(null);
                       resetIncidentForm();
+                      setIncidentSubmitError('');
                     }}
-                    className="px-6 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                    className="w-full sm:w-auto px-6 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmittingIncident}
-                    className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                    className="w-full sm:w-auto px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
                   >
                     {isSubmittingIncident ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Creating...</span>
+                        <span>{editingIncident ? 'Saving...' : 'Creating...'}</span>
                       </>
                     ) : (
                       <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                        <span>Create Incident</span>
+                        {!editingIncident && (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                          </svg>
+                        )}
+                        <span>{editingIncident ? 'Save Changes' : 'Create Incident'}</span>
                       </>
                     )}
                   </button>

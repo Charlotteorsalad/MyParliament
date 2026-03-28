@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../hooks";
 import { useLanguage } from "../../contexts/LanguageContext";
-import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
+import { DatePickerField, CustomSelect } from "../../components/ui";
 import SuccessModal from "../../components/SuccessModal";
 import LoadingModal from "../../components/LoadingModal";
 
@@ -75,6 +74,10 @@ function CompleteProfilePage() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showLoadingModal, setShowLoadingModal] = useState(false);
 
+  // Track navigation intent so we know whether to clear registration data on unmount.
+  const navigatingToStep1 = useRef(false);
+  const profileCompleted = useRef(false);
+
   // Save profile data to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('registrationStep2Data', JSON.stringify(form));
@@ -111,6 +114,17 @@ function CompleteProfilePage() {
     }
   }, [user, navigate]);
 
+  // Clear registration data when leaving this page without completing the profile
+  // or going back to step 1.
+  useEffect(() => {
+    return () => {
+      if (!navigatingToStep1.current && !profileCompleted.current) {
+        localStorage.removeItem('registrationStep1Data');
+        localStorage.removeItem('registrationStep2Data');
+      }
+    };
+  }, []);
+
   const validateForm = () => {
     const errors = {};
     
@@ -139,10 +153,19 @@ function CompleteProfilePage() {
   };
 
   const handleChange = (e) => {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    const name = e.target.name;
+    const value = e.target.value;
+    setForm((prev) => {
+      const next = { ...prev, [name]: value };
+      if (name === 'state') next.constituency = '';
+      return next;
+    });
     // Clear validation error when user starts typing
-    if (validationErrors[e.target.name]) {
-      setValidationErrors(prev => ({ ...prev, [e.target.name]: "" }));
+    if (validationErrors[name]) {
+      setValidationErrors(prev => ({ ...prev, [name]: "" }));
+    }
+    if (name === 'state' && validationErrors.constituency) {
+      setValidationErrors(prev => ({ ...prev, constituency: "" }));
     }
   };
 
@@ -159,14 +182,12 @@ function CompleteProfilePage() {
     
     try {
       await completeProfile(form);
+      profileCompleted.current = true;
       // Clear saved registration data
       localStorage.removeItem('registrationStep1Data');
       localStorage.removeItem('registrationStep2Data');
       
-      // Force 3 second delay with loading modal
-      console.log('Profile completed, starting 3-second delay...');
       setTimeout(() => {
-        console.log('3 seconds elapsed, showing success modal');
         setShowLoadingModal(false);
         setShowSuccessModal(true);
       }, 5000);
@@ -179,8 +200,12 @@ function CompleteProfilePage() {
     }
   };
 
+  const handleBackToStep1 = () => {
+    navigatingToStep1.current = true;
+    navigate('/register');
+  };
+
   const handleSuccessModalClose = () => {
-    console.log('Success modal close triggered');
     setShowSuccessModal(false);
     
     // Update the user's profile status to completed
@@ -225,7 +250,7 @@ function CompleteProfilePage() {
                 <div className="relative h-full flex items-center justify-center p-8">
                   <div className="text-center text-white max-w-sm">
                     <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <span className="text-4xl">👤</span>
+                      <span className="text-4xl"></span>
                     </div>
                     <h3 className="text-2xl font-semibold mb-2">{t('completeYourProfile')}</h3>
                     <p className="text-white/85 mb-6">{t('step2Of2')}</p>
@@ -242,7 +267,7 @@ function CompleteProfilePage() {
                   {/* Back button positioned at top left of the card */}
                   <div className="absolute top-4 left-4">
                     <button
-                      onClick={() => navigate('/register')}
+                      onClick={handleBackToStep1}
                       className="flex items-center text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
                     >
                       <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -315,43 +340,30 @@ function CompleteProfilePage() {
                         </div>
                       </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">{t('birthDate')} *</label>
-                        <DatePicker
-                          selected={form.BOD}
-                          onChange={(date) => setForm((prev) => ({ ...prev, BOD: date }))}
-                          dateFormat="dd/MM/yyyy"
-                          placeholderText="DD/MM/YYYY"
-                          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#C3C3E5] focus:border-transparent ${
-                            validationErrors.BOD ? 'border-red-500' : 'border-gray-300'
-                          }`}
-                          disabled={loading}
-                        />
-                        <div className="h-6 mt-1">
-                          {validationErrors.BOD && (
-                            <p className="text-sm text-red-600">{validationErrors.BOD}</p>
-                          )}
-                        </div>
-                      </div>
+                      <DatePickerField
+                        label={t('birthDate')}
+                        value={form.BOD}
+                        onChange={(date) => setForm((prev) => ({ ...prev, BOD: date }))}
+                        placeholder="DD/MM/YYYY"
+                        error={validationErrors.BOD}
+                        disabled={loading}
+                        required
+                        minDate={new Date(1900, 0, 1)}
+                        maxDate={new Date()}
+                        inputClassName="px-4 py-3 focus:ring-[#C3C3E5]"
+                      />
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">{t('state')} *</label>
-                        <select
+                        <CustomSelect
                           name="state"
                           value={form.state}
                           onChange={handleChange}
-                          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#C3C3E5] focus:border-transparent ${
-                            validationErrors.state ? 'border-red-500' : 'border-gray-300'
-                          }`}
+                          placeholder={t('selectState')}
+                          options={states.map((s) => ({ value: s, label: s }))}
                           disabled={loading}
-                        >
-                          <option value="">{t('selectState')}</option>
-                          {states.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </select>
+                          error={!!validationErrors.state}
+                        />
                         <div className="h-6 mt-1">
                           {validationErrors.state && (
                             <p className="text-sm text-red-600">{validationErrors.state}</p>
@@ -362,22 +374,15 @@ function CompleteProfilePage() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">{t('federalConstituency')} *</label>
-                      <select
+                      <CustomSelect
                         name="constituency"
                         value={form.constituency}
                         onChange={handleChange}
-                        className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#C3C3E5] focus:border-transparent ${
-                          validationErrors.constituency ? 'border-red-500' : 'border-gray-300'
-                        }`}
+                        placeholder=" "
+                        options={(constituencies[form.state] || []).map((c) => ({ value: c, label: c }))}
                         disabled={loading || !form.state}
-                      >
-                        <option value="">{t('selectConstituency')}</option>
-                        {(constituencies[form.state] || []).map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
+                        error={!!validationErrors.constituency}
+                      />
                       <div className="h-6 mt-1">
                         {validationErrors.constituency && (
                           <p className="text-sm text-red-600">{validationErrors.constituency}</p>

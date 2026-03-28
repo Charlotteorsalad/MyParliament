@@ -25,6 +25,35 @@ const workNoteSchema = new mongoose.Schema({
   }
 });
 
+const editHistorySchema = new mongoose.Schema({
+  editorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser',
+    required: true
+  },
+  editorName: {
+    type: String,
+    required: true
+  },
+  fields: [{
+    type: String
+  }],
+  summary: {
+    type: String,
+    maxlength: 500
+  },
+  changes: [{
+    field: { type: String },
+    label: { type: String },
+    from: { type: String },
+    to: { type: String }
+  }],
+  editedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { _id: false });
+
 const incidentSchema = new mongoose.Schema({
   number: {
     type: String,
@@ -63,7 +92,21 @@ const incidentSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['Software', 'Hardware', 'Infrastructure', 'Security', 'Network', 'Other'],
+    enum: [
+      'Software',
+      'Hardware',
+      'Infrastructure',
+      'Security',
+      'Network',
+      'Other',
+      'Database',
+      'User Access',
+      'Performance',
+      'Application',
+      'System',
+      'Process',
+      'Configuration'
+    ],
     required: true
   },
   subcategory: {
@@ -103,6 +146,7 @@ const incidentSchema = new mongoose.Schema({
     required: true
   },
   workNotes: [workNoteSchema],
+  editHistory: [editHistorySchema],
   resolutionNotes: {
     type: String,
     maxlength: 2000
@@ -146,8 +190,8 @@ incidentSchema.index({ category: 1 });
 incidentSchema.index({ createdAt: -1 });
 incidentSchema.index({ slaDue: 1 });
 
-// Pre-save middleware to generate incident number
-incidentSchema.pre('save', async function(next) {
+// Generate the incident number before validation runs.
+incidentSchema.pre('validate', async function(next) {
   if (this.isNew && !this.number) {
     const count = await this.constructor.countDocuments();
     this.number = `INC${String(count + 1).padStart(7, '0')}`;

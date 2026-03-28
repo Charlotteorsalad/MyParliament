@@ -2,6 +2,7 @@
 module.exports = (err, req, res, next) => {
     const status = err.status || 500;
     const message = err.message || 'Internal Server Error';
+    console.error('[errorHandler]', req.method, req.originalUrl, err.stack || err);
     // In production, the stack can be hidden
     res.status(status).json({
       error: { message, status, stack: process.env.NODE_ENV === 'production' ? undefined : err.stack }

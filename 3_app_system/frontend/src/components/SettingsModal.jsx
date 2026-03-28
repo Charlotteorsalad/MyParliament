@@ -3,13 +3,24 @@ import { useAuth } from "../hooks";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useNavigate } from "react-router-dom";
 import { TabNavigation } from "./ui";
+import { userApi } from "../api/userApi";
+import { subscribePush, unsubscribePush } from "../utils/pushNotifications";
 import { 
   NotificationSettings, 
   ProfileSettings, 
   PasswordSettings, 
-  HelpSupport, 
   LogoutConfirmation 
 } from "./settings";
+
+const DEFAULT_NOTIFICATION_PREFS = {
+  emailNotifications: true,
+  pushNotifications: true,
+  mpActivities: true,
+  discussionUpdates: true,
+  educationalContent: false,
+  moderationNotices: true,
+  frequency: 'daily'
+};
 
 function SettingsModal({ isOpen, onClose }) {
   const { user, logout } = useAuth();
@@ -27,6 +38,7 @@ function SettingsModal({ isOpen, onClose }) {
     mpActivities: true,
     discussionUpdates: true,
     educationalContent: false,
+    moderationNotices: true,
     frequency: 'daily'
   });
 
@@ -37,6 +49,7 @@ function SettingsModal({ isOpen, onClose }) {
     mpActivities: true,
     discussionUpdates: true,
     educationalContent: false,
+    moderationNotices: true,
     frequency: 'daily'
   });
 
@@ -58,8 +71,12 @@ function SettingsModal({ isOpen, onClose }) {
     constituency: ''
   });
 
+  // Profile data loading (so form shows data once fetched)
+  const [profileDataLoading, setProfileDataLoading] = useState(false);
   // Validation errors for profile
   const [validationErrors, setValidationErrors] = useState({});
+  // Shake effect for profile form when validation fails
+  const [shakeProfileForm, setShakeProfileForm] = useState(false);
 
   // Password change state
   const [passwordData, setPasswordData] = useState({
@@ -67,6 +84,10 @@ function SettingsModal({ isOpen, onClose }) {
     newPassword: '',
     confirmPassword: ''
   });
+  // Validation errors for password form
+  const [passwordValidationErrors, setPasswordValidationErrors] = useState({});
+  // Shake effect for password form when validation fails
+  const [shakePasswordForm, setShakePasswordForm] = useState(false);
 
   // Close modal on escape key
   useEffect(() => {
@@ -87,19 +108,59 @@ function SettingsModal({ isOpen, onClose }) {
     };
   }, [isOpen, onClose]);
 
-  // Load user data when modal opens
+  // Build profile form state from any user/profile object (API or auth context)
+  const buildProfileFormData = (source) => {
+    if (!source) return { firstName: '', lastName: '', BOD: null, state: '', constituency: '' };
+    const p = source.profile ?? source;
+    const rawBOD = p?.BOD ?? source?.BOD;
+    return {
+      firstName: String(p?.firstName ?? source?.firstName ?? '').trim(),
+      lastName: String(p?.lastName ?? source?.lastName ?? '').trim(),
+      BOD: rawBOD ? new Date(rawBOD) : null,
+      state: String(p?.state ?? source?.state ?? '').trim(),
+      constituency: String(p?.constituency ?? source?.constituency ?? '').trim()
+    };
+  };
+
+  // Load user data when modal opens: seed from auth user first, then fetch from API and overwrite
   useEffect(() => {
-    if (isOpen && user) {
-      const userProfileData = {
-        firstName: user.firstName || '',
-        lastName: user.lastName || '',
-        BOD: user.BOD ? new Date(user.BOD) : null,
-        state: user.state || '',
-        constituency: user.constituency || ''
-      };
-      setProfileData(userProfileData);
-      setOriginalProfileData(userProfileData);
-    }
+    if (!isOpen || !user) return;
+    // Immediately show whatever we have from auth context (e.g. from getMe on page load)
+    const fromAuth = buildProfileFormData(user);
+    setProfileData(fromAuth);
+    setOriginalProfileData(fromAuth);
+
+    let cancelled = false;
+    const loadProfile = async () => {
+      setProfileDataLoading(true);
+      try {
+        const profile = await userApi.getProfile();
+        if (cancelled) return;
+        const userProfileData = buildProfileFormData(profile);
+        setProfileData(userProfileData);
+        setOriginalProfileData(userProfileData);
+        const np = profile?.preferences?.notificationPreferences;
+        if (np && typeof np === 'object') {
+          const prefs = {
+            ...DEFAULT_NOTIFICATION_PREFS,
+            emailNotifications: np.emailNotifications !== false,
+            pushNotifications: np.pushNotifications !== false,
+            mpActivities: np.mpActivities !== false,
+            discussionUpdates: np.discussionUpdates !== false,
+            educationalContent: !!np.educationalContent,
+            moderationNotices: np.moderationNotices !== false
+          };
+          setNotifications(prefs);
+          setOriginalNotifications(prefs);
+        }
+      } catch (err) {
+        if (!cancelled) console.warn('[SettingsModal] Failed to load profile for preferences:', err);
+      } finally {
+        if (!cancelled) setProfileDataLoading(false);
+      }
+    };
+    loadProfile();
+    return () => { cancelled = true; };
   }, [isOpen, user]);
 
   const handleNotificationChange = (key, value) => {
@@ -107,10 +168,16 @@ function SettingsModal({ isOpen, onClose }) {
   };
 
   const handleProfileChange = (key, value) => {
-    setProfileData(prev => ({ ...prev, [key]: value }));
-    // Clear validation error when user starts typing
+    setProfileData(prev => {
+      const next = { ...prev, [key]: value };
+      if (key === 'state') next.constituency = '';
+      return next;
+    });
     if (validationErrors[key]) {
       setValidationErrors(prev => ({ ...prev, [key]: "" }));
+    }
+    if (key === 'state' && validationErrors.constituency) {
+      setValidationErrors(prev => ({ ...prev, constituency: "" }));
     }
   };
 
@@ -159,17 +226,74 @@ function SettingsModal({ isOpen, onClose }) {
 
   const handlePasswordChange = (key, value) => {
     setPasswordData(prev => ({ ...prev, [key]: value }));
+    if (passwordValidationErrors[key]) {
+      setPasswordValidationErrors(prev => ({ ...prev, [key]: '' }));
+    }
+    if (key === 'currentPassword' && passwordValidationErrors.newPassword) {
+      setPasswordValidationErrors(prev => ({ ...prev, newPassword: '' }));
+    }
+    if (key === 'newPassword' && passwordValidationErrors.confirmPassword) {
+      setPasswordValidationErrors(prev => ({ ...prev, confirmPassword: '' }));
+    }
+    if (key === 'confirmPassword' && passwordValidationErrors.confirmPassword) {
+      setPasswordValidationErrors(prev => ({ ...prev, confirmPassword: '' }));
+    }
+  };
+
+  // New password must meet all 5 requirements (same as PasswordSettings UI)
+  const newPasswordMeetsRequirements = (pwd) => {
+    if (!pwd || pwd.length < 8) return false;
+    return /[A-Z]/.test(pwd) && /[a-z]/.test(pwd) && /\d/.test(pwd) && /[!@#$%^&*(),.?":{}|<>]/.test(pwd);
+  };
+
+  // Validate password form
+  const validatePasswordForm = () => {
+    const errors = {};
+    if (!passwordData.currentPassword.trim()) {
+      errors.currentPassword = t('currentPasswordRequired');
+    }
+    if (!passwordData.newPassword.trim()) {
+      errors.newPassword = t('newPasswordRequired');
+    } else if (passwordData.newPassword.length < 8) {
+      errors.newPassword = t('newPasswordTooShort');
+    } else if (!newPasswordMeetsRequirements(passwordData.newPassword)) {
+      errors.newPassword = t('newPasswordRequirementsNotMet');
+    } else if (passwordData.currentPassword.trim() && passwordData.newPassword === passwordData.currentPassword) {
+      errors.newPassword = t('newPasswordSameAsCurrent');
+    }
+    if (!passwordData.confirmPassword.trim()) {
+      errors.confirmPassword = t('confirmPasswordRequired');
+    } else if (passwordData.newPassword !== passwordData.confirmPassword) {
+      errors.confirmPassword = t('passwordsDoNotMatch');
+    }
+    setPasswordValidationErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const saveNotifications = async () => {
     setLoading(true);
     try {
-      // TODO: Implement API call to save notification preferences
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      setMessage('Notification preferences saved successfully!');
-      // Update original state to match current state after successful save
+      await userApi.updateNotificationPreferences({
+        emailNotifications: notifications.emailNotifications,
+        pushNotifications: notifications.pushNotifications,
+        mpActivities: notifications.mpActivities,
+        discussionUpdates: notifications.discussionUpdates,
+        educationalContent: notifications.educationalContent,
+        moderationNotices: notifications.moderationNotices
+      });
       setOriginalNotifications({ ...notifications });
-      setTimeout(() => setMessage(''), 3000);
+      if (notifications.pushNotifications) {
+        const result = await subscribePush(userApi.getVapidPublicKey, userApi.savePushSubscription);
+        if (result.ok) {
+          setMessage('Notification preferences saved. Push notifications enabled.');
+        } else {
+          setMessage(`Preferences saved. Push could not be enabled: ${result.error || 'unsupported'}.`);
+        }
+      } else {
+        await unsubscribePush(userApi.removePushSubscription);
+        setMessage('Notification preferences saved successfully!');
+      }
+      setTimeout(() => setMessage(''), 4000);
     } catch (error) {
       setMessage('Failed to save notification preferences');
       setTimeout(() => setMessage(''), 3000);
@@ -180,19 +304,26 @@ function SettingsModal({ isOpen, onClose }) {
 
   const saveProfile = async () => {
     if (!validateProfileForm()) {
+      setShakeProfileForm(true);
+      setTimeout(() => setShakeProfileForm(false), 500);
       return;
     }
-    
+
     setLoading(true);
     try {
-      // TODO: Implement API call to update profile
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
+      const payload = {
+        firstName: profileData.firstName?.trim() ?? '',
+        lastName: profileData.lastName?.trim() ?? '',
+        BOD: profileData.BOD ? (profileData.BOD instanceof Date ? profileData.BOD.toISOString() : profileData.BOD) : null,
+        state: profileData.state?.trim() ?? '',
+        constituency: profileData.constituency?.trim() ?? ''
+      };
+      await userApi.updateProfile(payload);
       setMessage('Profile updated successfully!');
-      // Update original state to match current state after successful save
       setOriginalProfileData({ ...profileData });
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
-      setMessage('Failed to update profile');
+      setMessage(error?.response?.data?.message || 'Failed to update profile');
       setTimeout(() => setMessage(''), 3000);
     } finally {
       setLoading(false);
@@ -200,18 +331,19 @@ function SettingsModal({ isOpen, onClose }) {
   };
 
   const changePassword = async () => {
-    if (passwordData.newPassword !== passwordData.confirmPassword) {
-      setMessage('New passwords do not match');
-      setTimeout(() => setMessage(''), 3000);
+    if (!validatePasswordForm()) {
+      setShakePasswordForm(true);
+      setTimeout(() => setShakePasswordForm(false), 500);
       return;
     }
-    
+
     setLoading(true);
     try {
       // TODO: Implement API call to change password
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
       setMessage('Password changed successfully!');
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setPasswordValidationErrors({});
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
       setMessage('Failed to change password');
@@ -222,7 +354,6 @@ function SettingsModal({ isOpen, onClose }) {
   };
 
   const handleLogout = () => {
-    console.log('Logout button clicked');
     setShowLogoutConfirm(true);
   };
 
@@ -249,10 +380,9 @@ function SettingsModal({ isOpen, onClose }) {
   };
 
   const tabs = [
-    { id: 'notifications', label: t('notificationSettings'), icon: '🔔' },
-    { id: 'profile', label: t('profileSettings'), icon: '👤' },
-    { id: 'password', label: t('passwordSettings'), icon: '🔒' },
-    { id: 'help', label: t('helpSupport'), icon: '❓' }
+    { id: 'notifications', label: t('notificationSettings'), icon: '' },
+    { id: 'profile', label: t('profileSettings'), icon: '' },
+    { id: 'password', label: t('passwordSettings'), icon: '' }
   ];
 
   if (!isOpen) return null;
@@ -265,10 +395,10 @@ function SettingsModal({ isOpen, onClose }) {
         onClick={onClose}
       />
       
-      {/* Modal */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-[95%] max-w-6xl mx-4 max-h-[90vh] flex flex-col">
+      {/* Modal - fixed height so all tabs show consistent modal size */}
+      <div className="relative bg-white rounded-2xl shadow-2xl w-[1200px] max-w-[95vw] mx-4 h-[85vh] min-h-[480px] max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+        <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-900">{t('settings')}</h2>
           <button
             onClick={onClose}
@@ -287,9 +417,9 @@ function SettingsModal({ isOpen, onClose }) {
           </div>
         )}
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar */}
-          <div className="w-64 bg-gray-50 border-r border-gray-200 p-4 flex flex-col">
+          <div className="flex-shrink-0 w-64 bg-gray-50 border-r border-gray-200 p-4 flex flex-col">
             <TabNavigation
               tabs={tabs}
               activeTab={activeTab}
@@ -302,7 +432,7 @@ function SettingsModal({ isOpen, onClose }) {
             <div className="mt-4 pt-4 border-t border-gray-200">
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg text-white bg-red-600 hover:bg-red-700 transition-colors font-medium"
+                className="w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg border-2 border-red-500 bg-red-50 text-red-700 hover:bg-red-100 transition-colors font-medium"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -312,8 +442,8 @@ function SettingsModal({ isOpen, onClose }) {
             </div>
           </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6">
+          {/* Content - fills remaining height, scrolls per tab */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
             <TabNavigation.Content activeTab={activeTab} tabId="notifications">
               <NotificationSettings
                 notifications={notifications}
@@ -330,8 +460,10 @@ function SettingsModal({ isOpen, onClose }) {
                 onProfileChange={handleProfileChange}
                 onSave={saveProfile}
                 loading={loading}
+                profileDataLoading={profileDataLoading}
                 hasChanges={hasProfileChanges()}
                 validationErrors={validationErrors}
+                shakeForm={shakeProfileForm}
               />
             </TabNavigation.Content>
 
@@ -341,11 +473,9 @@ function SettingsModal({ isOpen, onClose }) {
                 onPasswordChange={handlePasswordChange}
                 onChangePassword={changePassword}
                 loading={loading}
+                validationErrors={passwordValidationErrors}
+                shakeForm={shakePasswordForm}
               />
-            </TabNavigation.Content>
-
-            <TabNavigation.Content activeTab={activeTab} tabId="help">
-              <HelpSupport />
             </TabNavigation.Content>
           </div>
         </div>

@@ -13,6 +13,11 @@ export const eduApi = {
     return response.data;
   },
 
+  // Increment view count when user opens a resource (fire-and-forget)
+  incrementView: async (eduId) => {
+    await api.patch(`/edu/${eduId}/view`);
+  },
+
   // Get educational resources by status
   getByStatus: async (status) => {
     const response = await api.get(`/edu/status/${status}`);

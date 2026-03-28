@@ -7,12 +7,19 @@ This script manages intelligent scheduling based on Parliament Takwim (calendar)
 - During active mesyuarat (session): daily incremental processing
 - After mesyuarat ends: full reprocessing for data integrity
 
-Full ML Pipeline (5 steps):
-1. preprocess_pipeline.py      → hansard_cpatf (cleaned text)
-2. production_inference.py      → hansard_inference (clusters)
-3. topic_generation.py          → hansard_topic (topic labels)
-4. arima_forecast.py            → hansard_arima (time series forecasts)
-5. topic_analysis.py            → hansard_analysis (advanced insights)
+Daily pipeline triggered at 08:00 MYT (--auto-process):
+  Step 0  daily_scraper.py           → HansardDocument  (pull new PDFs)
+  Step 1  preprocess_pipeline.py     → hansard_cpatf    (cleaned text)
+  Step 2  production_inference.py    → hansard_inference (clusters)
+  Step 3  topic_generation.py        → hansard_topic    (topic labels)
+  Step 4  arima_forecast.py          → hansard_arima    (time series forecasts)
+  Step 5  topic_analysis.py          → hansard_analysis (advanced insights)
+
+Cron expression (Linux/macOS – add via `crontab -e`):
+    0 8 * * * /path/to/venv/bin/python /path/to/takwim_scheduler.py --auto-process >> /var/log/takwim_scheduler.log 2>&1
+
+Windows Task Scheduler (PowerShell – run once as admin):
+    setup_task_scheduler.ps1
 
 How Incremental Mode Works:
 - Checks for new documents in the last N days
@@ -23,6 +30,7 @@ How Incremental Mode Works:
 Usage:
     python takwim_scheduler.py --validate-takwim          # Validate and sync Takwim
     python takwim_scheduler.py --check-session            # Check current session status
+    python takwim_scheduler.py --scrape-new               # Only run step 0 (daily scraper)
     python takwim_scheduler.py --auto-process             # Smart processing based on Takwim
     python takwim_scheduler.py --auto-process --dry-run   # Preview what would be executed
 """
@@ -47,6 +55,11 @@ load_dotenv(backend_env_path, override=True)
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/MyParliament")
 TAKWIM_URL = "https://www.parlimen.gov.my/takwim-dewan-rakyat.html?uweb=dr"
 TAKWIM_COLLECTION = "parliament_takwim"
+
+# Canonical cron expression for the daily 08:00 MYT job.
+# Exposed as a module-level constant so tests can import and assert it.
+DAILY_CRON_EXPRESSION = "0 8 * * *"
+DAILY_SCRAPE_LOOKBACK_DAYS = int(os.getenv("DAILY_SCRAPE_LOOKBACK_DAYS", "7"))
 
 
 def get_db():
@@ -380,6 +393,40 @@ def get_processing_strategy() -> Dict:
         }
 
 
+def run_daily_scraper(dry_run: bool = False) -> int:
+    """
+    Execute daily_scraper.py (step 0) and return the number of new docs added.
+
+    Uses subprocess so the scraper runs in its own process, matching the
+    pattern used by the rest of the pipeline steps.  A non-zero exit code
+    is treated as a warning only – the pipeline still continues.
+    """
+    import subprocess
+
+    cmd = [
+        sys.executable,
+        str(Path(__file__).parent / "daily_scraper.py"),
+        "--lookback-days", str(DAILY_SCRAPE_LOOKBACK_DAYS),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    print("\n[0/5] Running daily Hansard scraper...")
+    try:
+        result = subprocess.run(cmd, check=False, capture_output=False)
+        if result.returncode != 0:
+            print(
+                f"[takwim_scheduler] daily_scraper exited with code "
+                f"{result.returncode} – continuing pipeline"
+            )
+    except Exception as exc:
+        print(f"[takwim_scheduler] daily_scraper failed to launch: {exc}")
+
+    # Return value is informational; actual new-doc count is printed by the
+    # scraper itself.  We return 1 to signal "scraper was invoked".
+    return 1
+
+
 def log_processing_run(strategy: str, success: bool, details: str = ""):
     """Log a processing run to database."""
     db = get_db()
@@ -430,6 +477,9 @@ def auto_process():
     import subprocess
     
     try:
+        # Step 0 always runs first: pull any new Hansard PDFs into the DB
+        run_daily_scraper()
+
         if strategy_info['strategy'] == 'incremental':
             # Run incremental preprocessing
             print("\n[1/5] Running incremental preprocessing...")
@@ -589,15 +639,21 @@ def main():
 Examples:
   # Monthly Takwim validation (run via cron monthly)
   python takwim_scheduler.py --validate-takwim
-  
+
   # Check current session status
   python takwim_scheduler.py --check-session
-  
-  # Auto-process based on Takwim (run via cron daily)
+
+  # Run daily scraper only (no ML pipeline)
+  python takwim_scheduler.py --scrape-new
+
+  # Auto-process based on Takwim (run via OS cron at 08:00 daily)
   python takwim_scheduler.py --auto-process
-  
+
   # Dry-run to see what would be executed
   python takwim_scheduler.py --auto-process --dry-run
+
+  # Linux cron entry (crontab -e):
+  #   0 8 * * * /venv/bin/python /path/takwim_scheduler.py --auto-process >> /var/log/takwim.log 2>&1
         """
     )
     
@@ -612,6 +668,11 @@ Examples:
         help="Check current session status"
     )
     parser.add_argument(
+        "--scrape-new",
+        action="store_true",
+        help="Run daily_scraper.py only (step 0, no ML pipeline)"
+    )
+    parser.add_argument(
         "--auto-process",
         action="store_true",
         help="Automatically run processing based on Takwim intelligence"
@@ -621,11 +682,13 @@ Examples:
         action="store_true",
         help="Show what would be executed without actually running it"
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.validate_takwim:
         validate_takwim()
+    elif args.scrape_new:
+        run_daily_scraper(dry_run=args.dry_run)
     elif args.check_session:
         status = check_session_status()
         strategy = get_processing_strategy()

@@ -1,17 +1,10 @@
-import React, { useEffect } from 'react';
-import { useLocation, Navigate } from 'react-router-dom';
+import React from 'react';
+import { Navigate } from 'react-router-dom';
 import { useAdminAuth } from '../hooks/useAdminAuth';
 
 // Admin Route Guard - Additional security layer
 const AdminRouteGuard = ({ children }) => {
   const { isAuthenticated, loading, admin } = useAdminAuth();
-  const location = useLocation();
-
-  useEffect(() => {
-    // Log access attempts for security monitoring
-    console.log('AdminRouteGuard: Access attempt to:', location.pathname);
-    console.log('AdminRouteGuard: Auth status:', { isAuthenticated, loading, admin: !!admin });
-  }, [location.pathname, isAuthenticated, loading, admin]);
 
   // Show loading while checking authentication
   if (loading) {
@@ -27,7 +20,6 @@ const AdminRouteGuard = ({ children }) => {
 
   // Check if user is authenticated as admin
   if (!isAuthenticated || !admin) {
-    console.warn('AdminRouteGuard: Unauthorized access attempt to admin route:', location.pathname);
     return <Navigate to="/admin/login" replace />;
   }
 

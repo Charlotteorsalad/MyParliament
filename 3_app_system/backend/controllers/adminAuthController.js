@@ -22,6 +22,9 @@ exports.loginAdmin = async (req, res) => {
     if (err.message === 'Invalid credentials' || err.message === 'Account is not active') {
       return res.status(401).json({ message: err.message });
     }
+    if (err.message === 'OTP required' || err.message === 'Invalid OTP') {
+      return res.status(401).json({ message: err.message });
+    }
     res.status(500).json({ message: "Admin login failed", error: err.message });
   }
 };
@@ -41,6 +44,7 @@ exports.getAdminProfile = async (req, res) => {
         status: admin.status,
         isFirstLogin: admin.isFirstLogin,
         lastLogin: admin.lastLogin,
+        mfaEnabled: !!admin.mfaEnabled,
         createdAt: admin.createdAt,
         updatedAt: admin.updatedAt
       }
@@ -108,7 +112,11 @@ exports.forgotPassword = async (req, res) => {
 // Reset password
 exports.resetPassword = async (req, res) => {
   try {
-    const { resetToken, newPassword } = req.body;
+    const resetToken = req.body.resetToken || req.body.token;
+    const { newPassword } = req.body;
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({ message: 'Token and new password are required' });
+    }
     const result = await adminAuthService.resetPassword(resetToken, newPassword);
     res.json(result);
   } catch (err) {
@@ -189,5 +197,46 @@ exports.updateAdmin = async (req, res) => {
       return res.status(404).json({ message: err.message });
     }
     res.status(500).json({ message: "Failed to update admin", error: err.message });
+  }
+};
+
+// Setup MFA: get new secret + QR (protected)
+exports.setupMfa = async (req, res) => {
+  try {
+    const result = await adminAuthService.setupMfa(req.admin.id);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    if (err.message === 'Admin not found') {
+      return res.status(404).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'MFA setup failed', error: err.message });
+  }
+};
+
+// Enable MFA after verifying code from app (protected)
+exports.enableMfa = async (req, res) => {
+  try {
+    const { otp } = req.body;
+    if (!otp) return res.status(400).json({ message: 'OTP required' });
+    const result = await adminAuthService.enableMfa(req.admin.id, otp);
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'Invalid OTP' || err.message === 'Setup MFA first') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'Enable MFA failed', error: err.message });
+  }
+};
+
+// Disable MFA (protected)
+exports.disableMfa = async (req, res) => {
+  try {
+    const result = await adminAuthService.disableMfa(req.admin.id);
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'Admin not found') {
+      return res.status(404).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'Disable MFA failed', error: err.message });
   }
 };

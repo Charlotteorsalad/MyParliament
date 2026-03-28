@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useAuth } from "../../hooks";
 import { authApi } from "../../api";
@@ -22,6 +22,10 @@ function UserRegisterPage() {
   const [validationErrors, setValidationErrors] = useState({});
   const [fieldTouched, setFieldTouched] = useState({});
 
+  // Track whether the user successfully completed step 1 and is navigating to step 2.
+  // If they leave this page any other way, clear both registration localStorage keys.
+  const navigatingToStep2 = useRef(false);
+
   const [passwordStrength, setPasswordStrength] = useState({ score: 0, feedback: "", color: "text-gray-400" });
   const [requirements, setRequirements] = useState({ length: false, uppercase: false, lowercase: false, number: false, special: false });
 
@@ -31,7 +35,6 @@ function UserRegisterPage() {
     if (savedFormData) {
       try {
         const parsedData = JSON.parse(savedFormData);
-        console.log('Restoring saved form data:', parsedData); // Debug log
         
         // Only restore if the data has actual values
         if (parsedData.username || parsedData.email || parsedData.password || parsedData.confirmPassword) {
@@ -40,27 +43,20 @@ function UserRegisterPage() {
       } catch (error) {
         console.error('Error parsing saved form data:', error);
       }
-    } else {
-      console.log('No saved form data found'); // Debug log
     }
   };
 
-  // Restore form data when component mounts
   useEffect(() => {
-    console.log('Component mounted, restoring data...'); // Debug log
     restoreFormData();
   }, []);
 
-  // Restore form data when location changes (user returns from step 2)
   useEffect(() => {
-    console.log('Location changed, restoring data...'); // Debug log
     restoreFormData();
   }, [location.pathname]);
 
   // Function to manually save form data
   const saveFormData = () => {
     if (form.username || form.email || form.password || form.confirmPassword) {
-      console.log('Manually saving form data:', form);
       localStorage.setItem('registrationStep1Data', JSON.stringify(form));
     }
   };
@@ -76,7 +72,6 @@ function UserRegisterPage() {
   useEffect(() => {
     // Only save if there's actual data to save
     if (form.username || form.email || form.password || form.confirmPassword) {
-      console.log('Saving form data:', form); // Debug log
       localStorage.setItem('registrationStep1Data', JSON.stringify(form));
     }
   }, [form]);
@@ -96,6 +91,16 @@ function UserRegisterPage() {
         console.error('Error parsing step 2 data:', error);
       }
     }
+  }, []);
+
+  // Clear registration data when leaving this page without successfully creating an account.
+  useEffect(() => {
+    return () => {
+      if (!navigatingToStep2.current) {
+        localStorage.removeItem('registrationStep1Data');
+        localStorage.removeItem('registrationStep2Data');
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -232,6 +237,7 @@ function UserRegisterPage() {
 
     try {
       await register({ username: form.username, email: form.email, password: form.password });
+      navigatingToStep2.current = true;
       if (hasStep2Data) {
         setSuccessMsg("Account created! Continuing to complete your profile...");
       } else {
@@ -255,19 +261,19 @@ function UserRegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen flex flex-col bg-slate-50 min-w-0 max-w-full overflow-x-hidden">
       {/* Header (same style as Login) */}
-      <div className="w-full bg-white shadow-md border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] flex items-center justify-center mr-3">
+      <div className="w-full bg-white shadow-md border-b border-gray-100 min-w-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center min-w-0 flex-shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] flex items-center justify-center mr-3 flex-shrink-0">
               <svg className="w-6 h-6 text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" clipRule="evenodd" />
               </svg>
             </div>
-            <span className="text-xl font-bold text-gray-800">My Parliament</span>
+            <span className="text-xl font-bold text-gray-800 truncate">My Parliament</span>
           </div>
-          <Link to="/" className="text-sm font-medium text-gray-700 hover:text-gray-900">Back to Home</Link>
+          <Link to="/" className="text-sm font-medium text-gray-700 hover:text-gray-900 flex-shrink-0">Back to Home</Link>
         </div>
       </div>
 
@@ -280,14 +286,14 @@ function UserRegisterPage() {
         </div>
 
         {/* Split layout with tatami slide overlay */}
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <div className="relative w-full overflow-hidden rounded-2xl shadow-2xl">
-            <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[620px]">
+        <div className="relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-10 w-full min-w-0">
+          <div className="relative w-full min-w-0 overflow-hidden rounded-2xl shadow-2xl">
+            <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[520px] sm:min-h-[580px] lg:min-h-[620px]">
               {/* Left: CTA to login (now left side) */}
-              <div className="relative hidden lg:block lg:order-1">
+              <div className="relative hidden lg:block lg:order-1 min-w-0">
                 <div className="absolute inset-0 bg-black/30"></div>
-                <div className="relative h-full flex items-center justify-center p-8">
-                  <div className="text-center text-white max-w-sm">
+                <div className="relative h-full flex items-center justify-center p-6 lg:p-8 min-w-0">
+                  <div className="text-center text-white max-w-sm min-w-0 px-2">
                     <h3 className="text-2xl font-semibold mb-2">Already have an account?</h3>
                     <p className="text-white/85 mb-6">Sign in to access your dashboard.</p>
                     
@@ -302,16 +308,16 @@ function UserRegisterPage() {
               </div>
 
               {/* Right: Register form (moved to right side) */}
-              <div className="relative bg-white/90 backdrop-blur p-8 flex items-center lg:order-2">
-                <div className="w-full max-w-md mx-auto">
-                  <h2 className="text-3xl font-extrabold text-gray-900 mb-1">Sign Up</h2>
-                  <p className="text-gray-600 mb-6">Step 1 of 2: Create your account to get started</p>
+              <div className="relative bg-white/90 backdrop-blur p-4 sm:p-6 lg:p-8 flex items-center lg:order-2 min-w-0">
+                <div className="w-full max-w-md mx-auto min-w-0">
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-1 break-words">Sign Up</h2>
+                  <p className="text-gray-600 mb-6 text-sm sm:text-base break-words">Step 1 of 2: Create your account to get started</p>
 
                   {/* Simple Progress Bar */}
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-                      <span>Step 1: Account Details</span>
-                      <span>Step 2: Profile Information</span>
+                  <div className="mb-6 min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-600 mb-2 min-w-0">
+                      <span className="break-words">Step 1: Account Details</span>
+                      <span className="break-words">Step 2: Profile Information</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div className="bg-gradient-to-r from-[#C3C3E5] to-[#A8A8D8] h-2 rounded-full transition-all duration-300" style={{ width: hasStep2Data ? '100%' : '50%' }}></div>
@@ -320,16 +326,16 @@ function UserRegisterPage() {
 
                   {/* Progress indicator and step 2 summary */}
                   {hasStep2Data && (
-                    <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-                      <div className="flex items-center mb-3">
+                    <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg min-w-0">
+                      <div className="flex flex-wrap items-center mb-3 gap-2 min-w-0">
                         <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center mr-2">
                           <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                           </svg>
                         </div>
-                        <span className="text-sm font-medium text-green-800">Step 2 Progress Saved</span>
+                        <span className="text-sm font-medium text-green-800 break-words">Step 2 Progress Saved</span>
                       </div>
-                      <p className="text-sm text-green-700 mb-2">Your profile information has been saved. You can continue from where you left off.</p>
+                      <p className="text-sm text-green-700 mb-2 break-words">Your profile information has been saved. You can continue from where you left off.</p>
                       <button
                         onClick={() => navigate('/complete-profile')}
                         className="text-sm text-green-600 hover:text-green-800 font-medium underline"
@@ -340,10 +346,10 @@ function UserRegisterPage() {
                   )}
 
                   {error && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">{error}</div>
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm break-words">{error}</div>
                   )}
                   {successMsg && (
-                    <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md">{successMsg}</div>
+                    <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm break-words">{successMsg}</div>
                   )}
 
                   <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -535,6 +541,13 @@ function UserRegisterPage() {
                     <button type="submit" className="w-full bg-gradient-to-r from-[#C3C3E5] to-[#A8A8D8] text-white py-3 rounded-lg font-medium hover:from-[#B8B8E0] hover:to-[#9D9DD3] focus:ring-2 focus:ring-[#C3C3E5] focus:ring-offset-2" disabled={loading}>
                       {loading ? "Creating account..." : "Create Account"}
                     </button>
+                    {/* Narrow: switch to login (left panel hidden) */}
+                    <p className="lg:hidden mt-4 text-center text-sm text-gray-600">
+                      Already have an account?{" "}
+                      <Link to="/login" className="font-medium text-[#A8A8D8] hover:text-[#8B8BC9] underline">
+                        Log in
+                      </Link>
+                    </p>
                   </form>
                 </div>
               </div>
@@ -542,8 +555,8 @@ function UserRegisterPage() {
 
             {/* Full-screen slide overlay (covers entire container) */}
             <div className={`absolute inset-0 bg-white/95 backdrop-blur transform transition-transform duration-600 ease-out ${showLoginSlide ? "translate-x-0" : "-translate-x-full"}`} aria-hidden={!showLoginSlide}>
-              <div className="h-full flex items-center justify-center p-8">
-                <div className="text-center">
+              <div className="h-full flex items-center justify-center p-4 sm:p-8 min-w-0">
+                <div className="text-center min-w-0 max-w-full px-2">
                   <div className="mx-auto w-16 h-16 rounded-full bg-gradient-to-br from-[#C3C3E5] to-[#A8A8D8] mb-6 flex items-center justify-center">
                     <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c.943 0 1.714-.771 1.714-1.714S12.943 7.571 12 7.571 10.286 8.343 10.286 9.286 11.057 11 12 11z" />

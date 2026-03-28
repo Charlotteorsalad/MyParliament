@@ -1,10 +1,12 @@
 #root {
-  max-width: none;
+  max-width: 100%;
   margin: 0;
   padding: 0;
   text-align: left;
   width: 100%;
   min-height: 100vh;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 /* Hide scrollbar for navigation */
@@ -121,7 +123,9 @@ html, body {
   background: #f6f7fb; 
   min-height: calc(100vh - 56px);
   width: 100%;
-  max-width: none;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .content-admin { 
@@ -141,6 +145,14 @@ html, body {
   .content-admin { 
     padding: 0; 
     min-height: 100vh;
+  }
+}
+
+/* Half-window / narrow viewport: reduce padding so layout doesn't break (e.g. user | admin split) */
+@media (max-width: 1024px) {
+  .content {
+    padding: 12px 16px;
+    min-height: calc(100vh - 56px);
   }
 }
 
@@ -498,7 +510,7 @@ html, body {
 /* Smart cropping for different image types */
 .card-img img[data-aspect-ratio="portrait"] {
   object-fit: cover;
-  object-position: center 20%; /* Focus on upper portion for portraits */
+  object-position: center top; /* Keep full head visible (e.g. songkok, forehead) */
 }
 
 .card-img img[data-aspect-ratio="landscape"] {
@@ -513,7 +525,7 @@ html, body {
 
 /* Enhanced smart positioning for better face focus */
 .card-img img[data-focus="face"] {
-  object-position: center 25%;
+  object-position: center top;
 }
 
 .card-img img[data-focus="center"] {
@@ -524,9 +536,27 @@ html, body {
   object-position: center top;
 }
 
+/* MP cards: full face visible, image contained with border frame (no crop) - full width or narrow */
+.card-img--contain {
+  padding: 10px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+.card-img--contain img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain !important;
+  object-position: center;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: transform 0.3s ease;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
 /* Fallback for images that don't load */
 .card-img::before {
-  content: '👤';
+  content: '';
   position: absolute;
   top: 50%;
   left: 50%;
@@ -660,15 +690,13 @@ html, body {
   padding: 20px;
 }
 
-/* Control scrollbars when modal is open - allow Y-scroll for main parent, hide X-scroll */
+/* When modal is open: lock outer scroll so only the modal inner content scrolls */
 body.modal-open {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  overflow: hidden !important;
 }
 
 html.modal-open {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  overflow: hidden !important;
 }
 
 /* Hide scrollbars for common containers when modal is open */
@@ -684,18 +712,17 @@ body.modal-open footer {
   overflow: hidden !important;
 }
 
-/* Allow Y-axis scrolling for modal content and main parent window */
+/* Allow Y-axis scrolling only inside modal content (e.g. MpDetailDrawer [data-modal-content]) */
 body.modal-open [data-modal-content="true"] {
   overflow-y: auto !important;
   overflow-x: hidden !important;
   max-height: 90vh !important;
 }
 
-/* Allow Y-axis scrolling for main parent containers */
+/* Lock outer scroll: root/layout do not scroll when modal is open */
 body.modal-open #root,
 body.modal-open .layout {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  overflow: hidden !important;
 }
 
 .modal-content {
@@ -926,6 +953,17 @@ body.modal-open .layout {
   width: 20px;
   height: 20px;
   color: #4f46e5;
+}
+
+/* Contact detail region: no excess width or bottom space */
+.contact-detail-region {
+  width: fit-content;
+  max-width: 100%;
+  padding-bottom: 20px;
+}
+
+.contact-detail-region .profile-link {
+  margin-bottom: 0;
 }
 
 /* Contact Grid */
@@ -1219,7 +1257,7 @@ body.modal-open .layout {
 
 /* Fallback for EduCard images that don't load */
 .bg-white.shadow-md.rounded.overflow-hidden.hover\\:shadow-lg.transition.relative::before {
-  content: '📚';
+  content: '';
   position: absolute;
   top: 50%;
   left: 50%;
@@ -1272,7 +1310,7 @@ body.modal-open .layout {
   
   .card-img img {
     object-fit: cover;
-    object-position: center;
+    object-position: center top;
   }
 }
 
@@ -1317,7 +1355,7 @@ body.modal-open .layout {
 
 /* Enhanced positioning for different content types */
 .card-img img[data-content="face"] {
-  object-position: center 20%;
+  object-position: center top;
 }
 
 .card-img img[data-content="full-body"] {

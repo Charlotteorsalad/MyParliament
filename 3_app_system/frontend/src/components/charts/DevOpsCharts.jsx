@@ -149,100 +149,211 @@ export const CronJobTable = ({ jobs, title = "Scheduled Jobs Status" }) => {
   const getStatusColor = (status) => {
     switch (status) {
       case 'success': return 'bg-green-100 text-green-800';
-      case 'failed': return 'bg-red-100 text-red-800';
+      case 'failed':  return 'bg-red-100 text-red-800';
       case 'running': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'skipped': return 'bg-blue-100 text-blue-800';
+      default:        return 'bg-gray-100 text-gray-800';
     }
   };
 
   const formatDuration = (seconds) => {
-    if (seconds === 0) return 'N/A';
-    const hours = Math.floor(seconds / 3600);
+    if (!seconds || seconds === 0) return 'N/A';
+    const hours   = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) return `${hours}h ${minutes}m`;
+    const secs    = seconds % 60;
+    if (hours   > 0) return `${hours}h ${minutes}m`;
     if (minutes > 0) return `${minutes}m ${secs}s`;
     return `${secs}s`;
   };
 
   const formatNextRun = (nextRun) => {
-    const now = new Date();
-    const next = new Date(nextRun);
-    const diffMs = next - now;
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMs      = new Date(nextRun) - new Date();
+    if (diffMs <= 0) return 'soon';
+    const diffHours   = Math.floor(diffMs / (1000 * 60 * 60));
     const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-    
     if (diffHours > 24) return `${Math.floor(diffHours / 24)}d ${diffHours % 24}h`;
-    if (diffHours > 0) return `${diffHours}h ${diffMinutes}m`;
+    if (diffHours > 0)  return `${diffHours}h ${diffMinutes}m`;
     return `${diffMinutes}m`;
   };
 
+  const formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' });
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <h4 className="text-lg font-semibold">{title}</h4>
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+
+      {/* ── Desktop table ─────────────────────────────────────────────── */}
+      <div className="hidden sm:block bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Job Name</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Schedule</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Status</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Last Run</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Next Run</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Duration</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">Success Rate</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700 w-48">Job Name</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Schedule</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Status</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Last Run</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Next Run</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Duration</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Pulled</th>
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Success Rate</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {jobs.map((job, index) => (
-                <tr key={job.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div>
-                      <div className="font-medium text-gray-900">{job.name}</div>
-                      <div className="text-xs text-gray-500 truncate max-w-xs" title={job.description}>
+              {jobs.map((job) => {
+                const hasDetected  = job.last_detected > 0;
+                const successRate  = job.success_rate;
+                const rateColor    =
+                  successRate === null ? '#9CA3AF'
+                  : successRate > 95   ? '#10B981'
+                  : successRate > 75   ? '#F59E0B'
+                  :                      '#EF4444';
+
+                return (
+                  <tr key={job.id} className="hover:bg-gray-50 align-top">
+                    {/* Job Name – wraps freely */}
+                    <td className="px-4 py-3 w-48">
+                      <div className="font-medium text-gray-900 break-words">{job.name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5 break-words whitespace-normal leading-snug">
                         {job.description}
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 font-mono text-xs">{job.schedule}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(job.status)}`}>
-                      {job.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {new Date(job.lastRun).toLocaleString('en-US', { 
-                      month: 'short', 
-                      day: 'numeric', 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    in {formatNextRun(job.nextRun)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{formatDuration(job.duration)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium text-gray-900">{job.success_rate}%</span>
-                      <div className="w-16 bg-gray-200 rounded-full h-1.5">
-                        <div 
-                          className="h-1.5 rounded-full transition-all duration-500"
-                          style={{ 
-                            width: `${job.success_rate}%`,
-                            backgroundColor: job.success_rate > 95 ? '#10B981' : job.success_rate > 85 ? '#F59E0B' : '#EF4444'
-                          }}
-                        ></div>
+                    </td>
+
+                    <td className="px-4 py-3 text-gray-600 font-mono text-xs whitespace-nowrap">{job.schedule}</td>
+
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(job.status)}`}>
+                        {job.status}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap text-xs">
+                      {new Date(job.lastRun).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                      })}
+                    </td>
+
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap text-xs">
+                      in {formatNextRun(job.nextRun)}
+                    </td>
+
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatDuration(job.duration)}</td>
+
+                    {/* Pulled column */}
+                    <td className="px-4 py-3">
+                      <div className="text-sm font-medium text-gray-900">
+                        {job.last_downloaded > 0
+                          ? `${job.last_downloaded} doc${job.last_downloaded > 1 ? 's' : ''}`
+                          : <span className="text-gray-400">—</span>}
                       </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      {(job.window_start || job.window_end) && (
+                        <div className="text-xs text-gray-400 mt-0.5 whitespace-nowrap">
+                          {formatDate(job.window_start)} → {formatDate(job.window_end)}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Success Rate */}
+                    <td className="px-4 py-3">
+                      {successRate === null ? (
+                        <span className="text-gray-400 text-sm">—</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900 text-sm">{successRate}%</span>
+                          <div className="w-14 bg-gray-200 rounded-full h-1.5 flex-shrink-0">
+                            <div
+                              className="h-1.5 rounded-full transition-all duration-500"
+                              style={{ width: `${successRate}%`, backgroundColor: rateColor }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {hasDetected && (
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {job.last_downloaded}/{job.last_detected} detected
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── Mobile cards ──────────────────────────────────────────────── */}
+      <div className="sm:hidden space-y-3">
+        {jobs.map((job) => {
+          const successRate = job.success_rate;
+          return (
+            <div key={job.id} className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-gray-900 break-words">{job.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5 break-words whitespace-normal leading-snug">
+                    {job.description}
+                  </div>
+                </div>
+                <span className={`shrink-0 inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(job.status)}`}>
+                  {job.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                <div>
+                  <span className="text-gray-500">Schedule</span>
+                  <div className="font-mono text-gray-700 mt-0.5">{job.schedule}</div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Duration</span>
+                  <div className="text-gray-700 mt-0.5">{formatDuration(job.duration)}</div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Last Run</span>
+                  <div className="text-gray-700 mt-0.5">
+                    {new Date(job.lastRun).toLocaleString('en-US', {
+                      month: 'short', day: 'numeric',
+                      hour: '2-digit', minute: '2-digit'
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Next Run</span>
+                  <div className="text-gray-700 mt-0.5">in {formatNextRun(job.nextRun)}</div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Pulled</span>
+                  <div className="text-gray-700 mt-0.5">
+                    {job.last_downloaded > 0
+                      ? `${job.last_downloaded} doc${job.last_downloaded > 1 ? 's' : ''}`
+                      : '—'}
+                    {(job.window_start || job.window_end) && (
+                      <span className="text-gray-400 ml-1">
+                        ({formatDate(job.window_start)}→{formatDate(job.window_end)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Success Rate</span>
+                  <div className="text-gray-700 mt-0.5">
+                    {successRate === null ? '—' : `${successRate}%`}
+                    {job.last_detected > 0 && (
+                      <span className="text-gray-400 ml-1">
+                        ({job.last_downloaded}/{job.last_detected})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -350,20 +461,7 @@ export const LearningProgressChart = ({ learningJobs, performanceGains, title = 
 // System Alerts Component
 export const SystemAlerts = ({ alerts, title = "System Alerts" }) => {
   if (!alerts || alerts.length === 0) {
-    return (
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-        <div className="flex items-center">
-          <div className="flex-shrink-0">
-            <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-          </div>
-          <div className="ml-3">
-            <p className="text-sm text-green-800">All systems operational</p>
-          </div>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   const getSeverityColor = (severity) => {
@@ -377,10 +475,10 @@ export const SystemAlerts = ({ alerts, title = "System Alerts" }) => {
 
   const getSeverityIcon = (severity) => {
     switch (severity) {
-      case 'high': return '⚠️';
-      case 'medium': return '🟡';
-      case 'low': return 'ℹ️';
-      default: return '📋';
+      case 'high': return '';
+      case 'medium': return '';
+      case 'low': return '';
+      default: return '';
     }
   };
 

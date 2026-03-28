@@ -1,88 +1,102 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useApi } from "../../hooks";
 import { userApi } from "../../api";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useAuth } from "../../hooks";
 import { usePin } from "../../contexts/PinContext";
+import { useSSEEvent } from "../../contexts/SSEContext";
 import { LoadingSpinner, Button } from "../../components/ui";
 import { 
-  DashboardHeader, 
   StatsGrid, 
   QuickActionsSection, 
   UserProfileSection 
 } from "../../components/dashboard";
-import SettingsModal from "../../components/SettingsModal";
 import FollowerListModal from "../../components/FollowerListModal";
 
 function UserDashboard() {
-  const [user, setUser] = useState(null);
+  const { isAuthenticated, user: authUser } = useAuth();
+  const [user, setUser] = useState(authUser || null);
   const { executeApiCall, loading, error } = useApi();
-  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const { language, toggleLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const { pinnedTabs, togglePin, isPinned, PinButton } = usePin();
   const [stats, setStats] = useState({
     followedMPs: 0,
     followedTopics: 0,
     bookmarkedEduContent: 0,
-    bookmarkedIssues: 0,
     bookmarkedEdu: 0,
+    bookmarkedDiscussions: 0,
     discussions: 0
   });
-  const [activeProfileTab, setActiveProfileTab] = useState('discussions');
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  // Persist active profile tab across refresh / navigation
+  const [activeProfileTab, setActiveProfileTab] = useState(() => {
+    if (typeof window === 'undefined') return 'discussions';
+    const stored = window.localStorage.getItem('userProfileActiveTab');
+    return stored || 'discussions';
+  });
   const [showFollowerModal, setShowFollowerModal] = useState(false);
   const [followerModalType, setFollowerModalType] = useState('mps');
   const [followedMPs, setFollowedMPs] = useState([]);
   const [followedTopics, setFollowedTopics] = useState([]);
   const [bookmarkedEduContent, setBookmarkedEduContent] = useState([]);
-  const [bookmarkedIssues, setBookmarkedIssues] = useState([]);
+  const [bookmarkedDiscussions, setBookmarkedDiscussions] = useState([]);
+  const [userActivities, setUserActivities] = useState([]);
 
-  // Debug: Log when modal state changes
+  // Sync local user state with auth context (in case login just happened)
   useEffect(() => {
-    console.log('showSettingsModal changed to:', showSettingsModal);
-  }, [showSettingsModal]);
+    if (authUser) {
+      setUser(authUser);
+    }
+  }, [authUser]);
+
+  // Keep activeProfileTab in localStorage so coming back to dashboard restores same tab
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('userProfileActiveTab', activeProfileTab);
+  }, [activeProfileTab]);
 
   useEffect(() => {
     const fetchUserProfile = async () => {
       if (!isAuthenticated) {
-        // Set default stats for non-authenticated users
         setStats({
           followedMPs: 0,
           followedTopics: 0,
           bookmarkedEduContent: 0,
-          bookmarkedIssues: 0,
           bookmarkedEdu: 0,
+          bookmarkedDiscussions: 0,
           discussions: 0
         });
         return;
       }
 
       try {
-        const userData = await executeApiCall(userApi.getProfile);
+        const [userData, activitiesData] = await Promise.all([
+          executeApiCall(userApi.getProfile),
+          userApi.getMyActivities().catch(() => ({ activities: [] })),
+        ]);
         setUser(userData);
         setFollowedMPs(userData.followedMPs || []);
         setFollowedTopics(userData.followedTopics || []);
         setBookmarkedEduContent(userData.bookmarkedEduContent || []);
-        setBookmarkedIssues(userData.bookmarkedIssues || []);
+        setBookmarkedDiscussions(userData.bookmarkedDiscussions || []);
+        setUserActivities(activitiesData.activities || []);
         setStats({
           followedMPs: userData.stats?.followedMPs || 0,
           followedTopics: userData.stats?.followedTopics || 0,
           bookmarkedEduContent: userData.stats?.bookmarkedEduContent || 0,
-          bookmarkedIssues: userData.stats?.bookmarkedIssues || 0,
           bookmarkedEdu: userData.stats?.bookmarkedEdu || 0,
+          bookmarkedDiscussions: userData.stats?.bookmarkedDiscussions || 0,
           discussions: userData.stats?.discussions || 0
         });
       } catch (err) {
         console.error("Failed to fetch user profile:", err);
-        // Set default stats on error
         setStats({
           followedMPs: 0,
           followedTopics: 0,
           bookmarkedEduContent: 0,
-          bookmarkedIssues: 0,
           bookmarkedEdu: 0,
+          bookmarkedDiscussions: 0,
           discussions: 0
         });
       }
@@ -90,6 +104,13 @@ function UserDashboard() {
 
     fetchUserProfile();
   }, [executeApiCall, isAuthenticated]);
+
+  // Real-time: when admin sends a notification (e.g. moderation, reply), refresh dashboard data
+  useSSEEvent('notification', useCallback(() => {
+    if (isAuthenticated) {
+      executeApiCall(userApi.getProfile).then(setUser).catch(() => {});
+    }
+  }, [isAuthenticated, executeApiCall]));
 
   const handleNavigation = (path) => {
     navigate(path);
@@ -104,14 +125,6 @@ function UserDashboard() {
     setShowFollowerModal(false);
   };
 
-  const handleSettingsClick = () => {
-    console.log('Settings button clicked, isAuthenticated:', isAuthenticated);
-    if (isAuthenticated) {
-      setShowSettingsModal(true);
-    } else {
-      navigate('/login');
-    }
-  };
 
   if (loading) {
     return (
@@ -143,40 +156,19 @@ function UserDashboard() {
     );
   }
 
-  if (!user) {
+  // While authenticated but user profile not yet loaded, show loading state (avoid blank or "please login" flash)
+  if (!user && isAuthenticated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">{t('noUserData')}</h2>
-          <p className="text-gray-600 mb-4">{t('pleaseLoginToAccess')}</p>
-          <Button
-            onClick={() => navigate('/login')}
-            variant="primary"
-          >
-            {t('goToLogin')}
-          </Button>
-        </div>
+        <LoadingSpinner size="lg" text={t('loadingDashboard')} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#e0f2fe' }}>
-      <DashboardHeader
-        user={user}
-        isAuthenticated={isAuthenticated}
-        language={language}
-        toggleLanguage={toggleLanguage}
-        onSettingsClick={handleSettingsClick}
-      />
-
+    <div className="min-h-screen bg-white min-w-0 max-w-full">
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 w-full max-w-full min-w-0">
         {/* Stats Grid */}
         <StatsGrid stats={stats} />
 
@@ -199,18 +191,13 @@ function UserDashboard() {
               activeTab={activeProfileTab}
               onTabChange={setActiveProfileTab}
               onFollowerModalOpen={handleOpenFollowerModal}
+              userDiscussions={user?.discussions || []}
+              userReplies={user?.replies || []}
+              userActivities={userActivities}
             />
           </div>
         )}
       </div>
-      
-      {/* Settings Modal */}
-      {showSettingsModal && (
-        <SettingsModal
-          isOpen={showSettingsModal}
-          onClose={() => setShowSettingsModal(false)}
-        />
-      )}
 
       {/* Follower List Modal */}
       <FollowerListModal
@@ -221,16 +208,26 @@ function UserDashboard() {
           followerModalType === 'mps' ? t('followedMPs') :
           followerModalType === 'topics' ? t('followedTopics') :
           followerModalType === 'eduContent' ? t('bookmarkedEduContent') :
-          followerModalType === 'issues' ? t('bookmarkedIssues') :
+          followerModalType === 'discussions' ? t('bookmarkedDiscussions') :
           t('followedMPs')
         }
         items={
           followerModalType === 'mps' ? followedMPs :
           followerModalType === 'topics' ? followedTopics :
           followerModalType === 'eduContent' ? bookmarkedEduContent :
-          followerModalType === 'issues' ? bookmarkedIssues :
+          followerModalType === 'discussions' ? bookmarkedDiscussions :
           []
         }
+        onItemRemoved={(modalType, item) => {
+          const id = item?.id ?? item?._id;
+          if (modalType === 'mps') setFollowedMPs((prev) => prev.filter((i) => (i?.id ?? i?._id) !== id));
+          if (modalType === 'topics') {
+            setFollowedTopics((prev) => prev.filter((i) => String(i?.id ?? i?._id) !== String(id)));
+            setStats((s) => ({ ...s, followedTopics: Math.max(0, (s.followedTopics || 0) - 1) }));
+          }
+          if (modalType === 'eduContent') setBookmarkedEduContent((prev) => prev.filter((i) => (i?.id ?? i?._id) !== id));
+          if (modalType === 'discussions') setBookmarkedDiscussions((prev) => prev.filter((i) => (i?.id ?? i?._id) !== id));
+        }}
       />
     </div>
   );

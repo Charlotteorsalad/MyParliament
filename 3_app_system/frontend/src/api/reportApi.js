@@ -8,17 +8,19 @@ export const reportApi = {
   },
 
   // Get topic categories report
-  getTopicCategoriesReport: async (period = '30d') => {
-    const response = await api.get('/reports/topic-categories', { 
-      params: { period } 
-    });
+  // topViewedLimit: optional, for most-viewed-topics detail page (e.g. 20)
+  getTopicCategoriesReport: async (period = '30d', topViewedLimit) => {
+    const params = { period };
+    if (topViewedLimit != null) params.topViewedLimit = topViewedLimit;
+    const response = await api.get('/reports/topic-categories', { params });
     return response.data;
   },
 
   // Get MP performance report
-  getMPPerformanceReport: async (limit = 10) => {
+  // mode: 'current' | 'all'
+  getMPPerformanceReport: async (limit = 10, mode = 'current') => {
     const response = await api.get('/reports/mp-performance', { 
-      params: { limit } 
+      params: { limit, mode } 
     });
     return response.data;
   },
@@ -42,8 +44,8 @@ export const reportApi = {
   },
 
   // Get comprehensive dashboard data
-  getDashboardData: async () => {
-    const response = await api.get('/reports/dashboard');
+  getDashboardData: async (period = '30d') => {
+    const response = await api.get('/reports/dashboard', { params: { period } });
     return response.data;
   },
 

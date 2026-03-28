@@ -32,71 +32,74 @@ function ForgotPasswordModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-[95%] max-w-md mx-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Forgot Password</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <p className="text-gray-600 mb-4">
-          Enter your email address and we'll send you a link to reset your password. This works for any registered user.
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C3C3E5] focus:border-transparent"
-              placeholder="you@example.com"
-              required
-              disabled={loading}
-            />
-          </div>
-
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-              {error}
-            </div>
-          )}
-
-          {message && (
-            <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
-              {message}
-            </div>
-          )}
-
-          <div className="flex space-x-3">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-[320px]">
+        <div className="p-5">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <h3 className="text-base font-semibold text-gray-900 shrink-0">Forgot Password</h3>
             <button
-              type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              disabled={loading}
+              className="shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              aria-label="Close"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 bg-gradient-to-r from-[#C3C3E5] to-[#A8A8D8] text-white rounded-lg font-medium hover:from-[#B8B8E0] hover:to-[#9D9DD3] focus:ring-2 focus:ring-[#C3C3E5] focus:ring-offset-2 disabled:opacity-50"
-              disabled={loading || !email}
-            >
-              {loading ? 'Sending...' : 'Send Reset Link'}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
-        </form>
+
+          <p className="text-gray-600 text-sm mb-4 leading-snug">
+            Enter your email and we'll send you a reset link.
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+                Email
+              </label>
+              <input
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C3C3E5] focus:border-transparent"
+                placeholder="you@example.com"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            {error && (
+              <div className="p-2.5 bg-red-50 border border-red-100 text-red-700 rounded-lg text-xs">
+                {error}
+              </div>
+            )}
+
+            {message && (
+              <div className="p-2.5 bg-green-50 border border-green-100 text-green-700 rounded-lg text-xs break-all">
+                {message}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                disabled={loading}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 px-3 py-2 text-sm bg-gradient-to-r from-[#C3C3E5] to-[#A8A8D8] text-white rounded-lg font-medium hover:from-[#B8B8E0] hover:to-[#9D9DD3] focus:ring-2 focus:ring-[#C3C3E5] focus:ring-offset-2 disabled:opacity-50"
+                disabled={loading || !email}
+              >
+                {loading ? 'Sending...' : 'Send Link'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );

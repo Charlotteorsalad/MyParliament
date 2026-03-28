@@ -1,4 +1,5 @@
 const Mp = require('../models/Mp');
+const User = require('../models/User');
 
 class MpService {
   // Base aggregation stage for scoring MPs
@@ -24,32 +25,106 @@ class MpService {
   }
 
   async getFeaturedMPs() {
+    // Only MPs with ALL 5 performance metrics are eligible as "featured".
+    // Composite score formula (weights sum to 1):
+    //   40% attendance  +  20% responseRate  +  15% sentimentScore
+    //   +  10% askRate  +  10% escalateRate  +   5% interjectionRate
+    // All inputs are 0-100; result is 0-100.
     const data = await Mp.aggregate([
-      this._getBaseScoreStage(),
-      { 
-        $addFields: {
-          baseScore: {
-            $add: [
-              { $multiply: [200, '$_isCurrent'] },
-              { $multiply: [120, '$_isCabinet'] },
-              { $multiply: [50, '$_hasProfile'] },
-              { $multiply: [30, '$_hasContacts'] },
-              { $multiply: [20, '$_isTerm15'] },
-              { $multiply: [10, { $cond: [{ $gt: [{ $size: { $ifNull: ['$honorifics', []] } }, 0] }, 1, 0] }] }
-            ]
-          }
-        }
+      {
+        $match: {
+          status: 'current',
+          'performance.attendanceRate':   { $ne: null, $type: 'number' },
+          'performance.responseRate':     { $ne: null, $type: 'number' },
+          'performance.askRate':          { $ne: null, $type: 'number' },
+          'performance.escalateRate':     { $ne: null, $type: 'number' },
+          'performance.interjectionRate': { $ne: null, $type: 'number' },
+          'performance.sentimentScore':   { $ne: null, $type: 'number' },
+        },
       },
-      { $sort: { baseScore: -1, name: 1 } },
-      { $limit: 12 },
-      { 
+      {
+        $addFields: {
+          performanceScore: {
+            $add: [
+              { $multiply: [0.40, '$performance.attendanceRate'] },
+              { $multiply: [0.20, '$performance.responseRate'] },
+              { $multiply: [0.15, '$performance.sentimentScore'] },
+              { $multiply: [0.10, '$performance.askRate'] },
+              { $multiply: [0.10, '$performance.escalateRate'] },
+              { $multiply: [0.05, '$performance.interjectionRate'] },
+            ],
+          },
+        },
+      },
+      { $sort: { performanceScore: -1, name: 1 } },
+      { $limit: 40 },
+      {
         $project: {
-          _id: 0, mp_id: 1, name: 1, party: 1, constituency: 1,
-          profilePicture: 1, status: 1, parliament_term: 1, baseScore: 1
-        }
-      }
+          _id: 1, mp_id: 1, name: 1, full_name_with_titles: 1,
+          party: 1, party_full_name: 1,
+          constituency: 1, constituency_code: 1, constituency_name: 1,
+          state: 1, profilePicture: 1, status: 1, parliament_term: 1,
+          performanceScore: { $round: ['$performanceScore', 1] },
+          'performance.attendanceRate':   1,
+          'performance.responseRate':     1,
+          'performance.askRate':          1,
+          'performance.escalateRate':     1,
+          'performance.interjectionRate': 1,
+          'performance.sentimentScore':   1,
+        },
+      },
     ]);
-    
+
+    return data;
+  }
+
+  // Featured MPs across all recorded terms (not limited to current only)
+  async getFeaturedMPsAllTime() {
+    const data = await Mp.aggregate([
+      {
+        $match: {
+          // Allow any status, but still require full performance metrics
+          'performance.attendanceRate':   { $ne: null, $type: 'number' },
+          'performance.responseRate':     { $ne: null, $type: 'number' },
+          'performance.askRate':          { $ne: null, $type: 'number' },
+          'performance.escalateRate':     { $ne: null, $type: 'number' },
+          'performance.interjectionRate': { $ne: null, $type: 'number' },
+          'performance.sentimentScore':   { $ne: null, $type: 'number' },
+        },
+      },
+      {
+        $addFields: {
+          performanceScore: {
+            $add: [
+              { $multiply: [0.40, '$performance.attendanceRate'] },
+              { $multiply: [0.20, '$performance.responseRate'] },
+              { $multiply: [0.15, '$performance.sentimentScore'] },
+              { $multiply: [0.10, '$performance.askRate'] },
+              { $multiply: [0.10, '$performance.escalateRate'] },
+              { $multiply: [0.05, '$performance.interjectionRate'] },
+            ],
+          },
+        },
+      },
+      { $sort: { performanceScore: -1, name: 1 } },
+      { $limit: 80 },
+      {
+        $project: {
+          _id: 1, mp_id: 1, name: 1, full_name_with_titles: 1,
+          party: 1, party_full_name: 1,
+          constituency: 1, constituency_code: 1, constituency_name: 1,
+          state: 1, profilePicture: 1, status: 1, parliament_term: 1,
+          performanceScore: { $round: ['$performanceScore', 1] },
+          'performance.attendanceRate':   1,
+          'performance.responseRate':     1,
+          'performance.askRate':          1,
+          'performance.escalateRate':     1,
+          'performance.interjectionRate': 1,
+          'performance.sentimentScore':   1,
+        },
+      },
+    ]);
+
     return data;
   }
 
@@ -103,19 +178,55 @@ class MpService {
     const filter = {};
     if (party) filter.party = { $in: party.split(',') };
     if (state) filter.state = { $in: state.split(',') };
-    if (term) filter.parliament_term = { $in: term.split(',') };
+    if (term) {
+      const terms = term.split(',');
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [
+          { parliament_term: { $in: terms } },
+          { 'parliamentary_history.parliament_term': { $in: terms } }
+        ]
+      });
+    }
     if (status) filter.status = status;
     
-    // Handle search - search in name or party
+    // Handle search - name, party (short or full name), state, constituency (name or code e.g. P020)
     if (search && search.trim()) {
-      const searchRegex = new RegExp(search.trim(), 'i');
-      filter.$or = [
-        { name: searchRegex },
-        { party: searchRegex }
-      ];
+      const term = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(term, 'i');
+      const searchCondition = {
+        $or: [
+          { name: searchRegex },
+          { party: searchRegex },
+          { party_full_name: searchRegex },
+          { state: searchRegex },
+          { constituency: searchRegex },
+          { constituency_code: searchRegex },
+          { constituency_name: searchRegex }
+        ]
+      };
+      if (filter.$and) {
+        filter.$and.push(searchCondition);
+      } else {
+        filter.$or = searchCondition.$or;
+      }
     } else if (q) {
-      // Fallback to old text search if no new search parameter
       filter.$text = { $search: q };
+    }
+
+    // Universal dedup: some MPs have multiple documents (one per parliament term).
+    // If a current document exists for a person, always suppress their historical
+    // duplicates — even in "Inactive MPs" view. A person who is currently active
+    // should never appear as inactive.
+    const currentMpNames = await Mp.distinct('name', { ...filter, status: 'current' });
+    if (currentMpNames.length > 0) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [
+          { status: 'current' },
+          { name: { $nin: currentMpNames } }
+        ]
+      });
     }
 
     // Build the complete filter for accurate total count
@@ -136,7 +247,6 @@ class MpService {
       totalFilter.party = 'Independent';
     }
     
-    // Get total count with complete filters
     const total = await Mp.countDocuments(totalFilter);
 
     try {
@@ -191,7 +301,7 @@ class MpService {
         { $limit: +limit },
         {
           $project: {
-            _id: 0, mp_id: 1, name: 1, party: 1, constituency: 1,
+            _id: 1, mp_id: 1, name: 1, party: 1, constituency: 1, constituency_code: 1, constituency_name: 1, state: 1,
             honorifics: 1, profilePicture: 1, status: 1, parliament_term: 1
           }
         }
@@ -247,7 +357,7 @@ class MpService {
       }
 
       const data = await Mp.find(fallbackFilter, {
-        _id: 0, mp_id: 1, name: 1, party: 1, constituency: 1,
+        _id: 1, mp_id: 1, name: 1, party: 1, constituency: 1, constituency_code: 1, constituency_name: 1, state: 1,
         honorifics: 1, profilePicture: 1, status: 1, parliament_term: 1
       })
         .sort(sortBy)
@@ -260,22 +370,88 @@ class MpService {
   }
 
   async getMPDetail(mpId) {
-    const mp = await Mp.findOne(
-      { mp_id: mpId },
-      {
-        _id: 0, mp_id: 1, name: 1, full_name_with_titles: 1, honorifics: 1,
-        party: 1, party_full_name: 1, constituency: 1, constituency_code: 1, constituency_name: 1,
-        positionInParliament: 1, parliament_term: 1, status: 1, service: 1,
-        profilePicture: 1, profile_url: 1, state: 1, positionInCabinet: 1,
-        seatNumber: 1, phone: 1, fax: 1, email: 1, address: 1, created_at: 1
+    const mongoose = require('mongoose');
+    let mp = null;
+    if (typeof mpId === 'string' && /^[0-9a-fA-F]{24}$/.test(mpId)) {
+      try {
+        mp = await Mp.findById(mpId).select(
+          '_id mp_id name full_name_with_titles honorifics party party_full_name constituency constituency_code constituency_name positionInParliament parliament_term status service profilePicture profile_url state positionInCabinet seatNumber phone fax email address created_at performance parliamentary_history'
+        ).lean();
+      } catch {
+        mp = null;
       }
-    ).lean();
+    }
+    if (!mp) {
+      mp = await Mp.findOne(
+        { mp_id: mpId },
+        {
+          _id: 1, mp_id: 1, name: 1, full_name_with_titles: 1, honorifics: 1,
+          party: 1, party_full_name: 1, constituency: 1, constituency_code: 1, constituency_name: 1,
+          positionInParliament: 1, parliament_term: 1, status: 1, service: 1,
+          profilePicture: 1, profile_url: 1, state: 1, positionInCabinet: 1,
+          seatNumber: 1, phone: 1, fax: 1, email: 1, address: 1, created_at: 1, performance: 1,
+          parliamentary_history: 1
+        }
+      ).lean();
+    }
+    if (!mp) {
+      throw new Error('MP not found');
+    }
+    const followerIdStr = String(mp._id);
+    let followerCount;
+    if (mongoose.Types.ObjectId.isValid(followerIdStr)) {
+      const legacyId = new mongoose.Types.ObjectId(followerIdStr);
+      followerCount = await User.countDocuments({
+        $or: [
+          { followedMPs: followerIdStr },
+          { followedMPs: legacyId },
+        ],
+      });
+    } else {
+      followerCount = await User.countDocuments({ followedMPs: followerIdStr });
+    }
+    return { ...mp, followerCount };
+  }
+
+  async getMPDetailByName(name) {
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      throw new Error('MP not found');
+    }
+    const trimmed = name.trim();
+    const regex = new RegExp(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const mp = await Mp.findOne({
+      $or: [
+        { name: regex },
+        { full_name_with_titles: regex },
+      ],
+    }, {
+      _id: 1, mp_id: 1, name: 1, full_name_with_titles: 1, honorifics: 1,
+      party: 1, party_full_name: 1, constituency: 1, constituency_code: 1, constituency_name: 1,
+      positionInParliament: 1, parliament_term: 1, status: 1, service: 1,
+      profilePicture: 1, profile_url: 1, state: 1, positionInCabinet: 1,
+      seatNumber: 1, phone: 1, fax: 1, email: 1, address: 1, created_at: 1,
+      parliamentary_history: 1,
+    }).lean();
 
     if (!mp) {
       throw new Error('MP not found');
     }
 
-    return mp;
+    const mongoose = require('mongoose');
+    const followerIdStr = String(mp._id);
+    let followerCount;
+    if (mongoose.Types.ObjectId.isValid(followerIdStr)) {
+      const legacyId = new mongoose.Types.ObjectId(followerIdStr);
+      followerCount = await User.countDocuments({
+        $or: [
+          { followedMPs: followerIdStr },
+          { followedMPs: legacyId },
+        ],
+      });
+    } else {
+      followerCount = await User.countDocuments({ followedMPs: followerIdStr });
+    }
+    return { ...mp, followerCount };
   }
 }
 

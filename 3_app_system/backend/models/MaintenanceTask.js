@@ -1,5 +1,34 @@
 const mongoose = require('mongoose');
 
+const editHistorySchema = new mongoose.Schema({
+  editorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser',
+    required: true
+  },
+  editorName: {
+    type: String,
+    required: true
+  },
+  fields: [{
+    type: String
+  }],
+  summary: {
+    type: String,
+    maxlength: 500
+  },
+  changes: [{
+    field: { type: String },
+    label: { type: String },
+    from: { type: String },
+    to: { type: String }
+  }],
+  editedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { _id: false });
+
 const maintenanceTaskSchema = new mongoose.Schema({
   number: {
     type: String,
@@ -47,8 +76,7 @@ const maintenanceTaskSchema = new mongoose.Schema({
   },
   assignmentGroup: {
     type: String,
-    enum: ['Application Development', 'IT Support', 'Infrastructure', 'Security', 'Network', 'Database', 'Other'],
-    required: true
+    enum: ['Application Development', 'IT Support', 'Infrastructure', 'Security', 'Network', 'Database', 'Other']
   },
   scheduledDate: {
     type: Date,
@@ -63,8 +91,7 @@ const maintenanceTaskSchema = new mongoose.Schema({
     required: true
   },
   estimatedDuration: {
-    type: String,
-    required: true
+    type: String
   },
   actualStartTime: {
     type: Date
@@ -217,6 +244,7 @@ const maintenanceTaskSchema = new mongoose.Schema({
     type: String,
     maxlength: 50
   }],
+  editHistory: [editHistorySchema],
   createdAt: {
     type: Date,
     default: Date.now
@@ -233,8 +261,8 @@ maintenanceTaskSchema.pre('save', function(next) {
   next();
 });
 
-// Generate maintenance task number
-maintenanceTaskSchema.pre('save', async function(next) {
+// Generate maintenance task number (must run before validation so required field is populated)
+maintenanceTaskSchema.pre('validate', async function(next) {
   if (this.isNew && !this.number) {
     const count = await this.constructor.countDocuments();
     this.number = `MNT${String(count + 1).padStart(6, '0')}`;

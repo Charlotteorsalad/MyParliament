@@ -5,7 +5,8 @@ const {
   submitQuiz,
   getQuizProgress,
   getQuizResults,
-  getQuizHistory
+  getQuizHistory,
+  getSubmissionByResource
 } = require("../controllers/quizController");
 
 // All quiz routes require authentication
@@ -22,5 +23,8 @@ router.get("/results/:quizId", getQuizResults);
 
 // Get quiz history
 router.get("/history", getQuizHistory);
+
+// Get existing submission for a resource (for restoring state after refresh/login)
+router.get("/submission/:resourceId", getSubmissionByResource);
 
 module.exports = router;

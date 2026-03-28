@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { adminApi } from '../../api';
 
-const AdminEduContentManagement = () => {
+const AdminEduContentManagement = ({ onContentChange } = {}) => {
   // Remove useAdminAuth since we're already in an authenticated admin context
   
   const [activeTab, setActiveTab] = useState('content');
@@ -10,14 +11,16 @@ const AdminEduContentManagement = () => {
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalContentCount, setTotalContentCount] = useState(0);
   const [stats, setStats] = useState({});
   const [contentStatusFilter, setContentStatusFilter] = useState('all'); // 'all', 'published', 'draft', 'archived'
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [quizFilter, setQuizFilter] = useState('all');
   const [attachmentsFilter, setAttachmentsFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('createdAt-desc');
+  const [sortBy, setSortBy] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [goToPageInput, setGoToPageInput] = useState('');
 
   // Category options for dropdown
   const categoryOptions = [
@@ -41,10 +44,9 @@ const AdminEduContentManagement = () => {
 
   // Attachments filter options
   const attachmentsOptions = [
-    { value: 'all', label: 'All Attachments' },
-    { value: '0', label: 'No Files (0)' },
-    { value: '1', label: '1 File' },
-    { value: '2', label: '2 Files' }
+    { value: 'all', label: 'All attachment' },
+    { value: '0', label: 'No attachment' },
+    { value: 'has', label: 'Has attachment' }
   ];
 
   // Handle column sorting
@@ -89,6 +91,7 @@ const AdminEduContentManagement = () => {
   const [showQuizForm, setShowQuizForm] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [formErrors, setFormErrors] = useState({});
+  const [shakeForm, setShakeForm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [createdContent, setCreatedContent] = useState(null);
   const [showCancelOptions, setShowCancelOptions] = useState(false);
@@ -170,11 +173,22 @@ const AdminEduContentManagement = () => {
     }
   }, []);
 
+  // Lock body scroll when any overlay modal is open; restore on close
+  const anyModalOpen = showSuccess || showCancelOptions || showDiscardConfirm || showAlert || showArchiveModal || showDeleteModal || showRestoreModal;
+  useEffect(() => {
+    if (anyModalOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = prev || ''; };
+    }
+  }, [anyModalOpen]);
+
   const fetchContent = async () => {
     try {
       setLoading(true);
       
       // Parse sortBy and sortOrder from the combined format
+      // Default to createdAt desc if no sortBy specified
       let sortField = 'createdAt';
       let sortDirection = 'desc';
       
@@ -212,19 +226,10 @@ const AdminEduContentManagement = () => {
         params.search = searchTerm.trim();
       }
       
-      console.log('Fetching content with params:', params);
       const response = await adminApi.getAllEduContent(params);
-      console.log('Content response:', response.data.content);
-      if (response.data.content && response.data.content.length > 0) {
-        console.log('First content item quiz:', response.data.content[0].quiz);
-        console.log('First content item attachments:', {
-          contentAttachments: response.data.content[0].contentAttachments,
-          quizAttachments: response.data.content[0].quizAttachments,
-          attachments: response.data.content[0].attachments
-        });
-      }
       setContent(response.data.content || []);
       setTotalPages(response.data.pagination?.pages || 1);
+      setTotalContentCount(response.data.pagination?.total ?? 0);
     } catch (error) {
       console.error('Error fetching content:', error);
       // If it's a 404 or the endpoint doesn't exist, show empty state
@@ -232,10 +237,12 @@ const AdminEduContentManagement = () => {
         setApiAvailable(false);
         setContent([]);
         setTotalPages(1);
+        setTotalContentCount(0);
       } else {
         // For other errors, still show empty state but log the error
         setContent([]);
         setTotalPages(1);
+        setTotalContentCount(0);
       }
     } finally {
       setLoading(false);
@@ -278,8 +285,99 @@ const AdminEduContentManagement = () => {
   const handleCreateContent = async (e) => {
     e.preventDefault();
     
-    // Only proceed if we're on step 5 (preview & confirm)
-    if (currentStep !== 5) {
+    // Only proceed if we're on step 4 (preview & confirm)
+    if (currentStep !== 4) {
+      return;
+    }
+    
+    // Validate all steps before submitting
+    let isValid = true;
+    const allErrors = {};
+    
+    // Validate step 1
+    if (!contentForm.title?.trim()) {
+      allErrors.title = 'Title is required';
+      isValid = false;
+    }
+    if (!contentForm.description?.trim()) {
+      allErrors.description = 'Description is required';
+      isValid = false;
+    }
+    if (!contentForm.content?.trim()) {
+      allErrors.content = 'Content is required';
+      isValid = false;
+    }
+    
+    // Validate step 2
+    if (!selectedImage) {
+      allErrors.image = 'Featured image is required';
+      isValid = false;
+    }
+    
+    // Validate step 3 (if quiz is enabled)
+    if (contentForm.hasQuiz) {
+      if (!contentForm.quizTitle?.trim()) {
+        allErrors.quizTitle = 'Quiz title is required';
+        isValid = false;
+      }
+      if (!contentForm.quizQuestions || contentForm.quizQuestions.length === 0) {
+        allErrors.quizQuestions = 'At least one question is required';
+        isValid = false;
+      }
+      if (contentForm.quizQuestions && contentForm.quizQuestions.length > 0) {
+        contentForm.quizQuestions.forEach((question, index) => {
+          if (!question.question?.trim()) {
+            allErrors[`quizQuestion_${index}`] = `Question ${index + 1} content is required`;
+            isValid = false;
+          }
+          const qType = question.type || 'multiple_choice';
+          if (qType === 'multiple_choice') {
+            const filled = (question.options || []).filter((o) => String(o).trim()).length;
+            if (filled < 2) {
+              allErrors[`quizQuestion_${index}`] = `Question ${index + 1}: enter at least two answer choices`;
+              isValid = false;
+            }
+          }
+        });
+      }
+    }
+    
+    if (!isValid) {
+      setFormErrors(allErrors);
+      setShakeForm(true);
+      setTimeout(() => setShakeForm(false), 500);
+      
+      // Determine which step contains the first error and navigate to it
+      const firstErrorField = Object.keys(allErrors)[0];
+      let targetStep = currentStep;
+      
+      if (firstErrorField === 'title' || firstErrorField === 'description' || firstErrorField === 'content') {
+        targetStep = 1;
+      } else if (firstErrorField === 'image' || firstErrorField === 'tags' || firstErrorField === 'themes') {
+        targetStep = 2;
+      } else if (firstErrorField.startsWith('quiz')) {
+        targetStep = 3;
+      }
+      
+      // Navigate to the step with the error
+      if (targetStep !== currentStep) {
+        setCurrentStep(targetStep);
+        // Wait for step to render, then scroll
+        setTimeout(() => {
+          const errorElement = document.querySelector(`[name="${firstErrorField}"]`) || 
+                              document.querySelector(`[data-field="${firstErrorField}"]`);
+          if (errorElement) {
+            errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      } else {
+        // Scroll to error element in current step
+        const errorElement = document.querySelector(`[name="${firstErrorField}"]`) || 
+                            document.querySelector(`[data-field="${firstErrorField}"]`);
+        if (errorElement) {
+          errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
       return;
     }
     
@@ -330,59 +428,34 @@ const AdminEduContentManagement = () => {
         imageContentType,
         imageSize,
         imageOriginalName,
-        hasQuiz: Boolean(contentForm.hasQuiz),
+        hasQuiz: Boolean(contentForm.hasQuiz) && (contentForm.quizQuestions?.length > 0),
         quizTitle: contentForm.quizTitle || '',
         quizDescription: contentForm.quizDescription || '',
-        quizTimeLimit: contentForm.quizTimeLimit || 30,
-        quizPassingScore: contentForm.quizPassingScore || 70,
+        quizTimeLimit: 30,
+        quizPassingScore: 70,
         quizMaxAttempts: contentForm.quizMaxAttempts || 3,
-        quizQuestions: JSON.stringify(contentForm.quizQuestions || [])
+        quizQuestions: contentForm.hasQuiz && contentForm.quizQuestions?.length ? contentForm.quizQuestions : []
       };
       
       
       const response = await adminApi.createEduContent(formattedData);
       const contentId = response.data.content._id;
       
-      // Upload content attachments if any
-      console.log('Selected content files for upload:', selectedFiles);
       if (selectedFiles.length > 0) {
         for (const file of selectedFiles) {
           try {
-            console.log('Uploading content attachment:', file.name, file.size, file.type);
             const fileFormData = new FormData();
             fileFormData.append('file', file);
             fileFormData.append('attachmentType', 'content');
-            const uploadResponse = await adminApi.uploadEduContentAttachment(contentId, fileFormData);
-            console.log('Content attachment upload response:', uploadResponse);
+            await adminApi.uploadEduContentAttachment(contentId, fileFormData);
           } catch (attachmentError) {
             console.error('Error uploading content attachment:', attachmentError);
-            showAlertMessage(`Content created but attachment ${file.name} upload failed. You can upload it later.`, 'warning');
+            const msg = attachmentError.response?.data?.message;
+            showAlertMessage(msg ? `Content created but attachment failed: ${msg}` : `Content created but attachment ${file.name} upload failed. You can upload it later.`, 'warning');
           }
         }
-      } else {
-        console.log('No content files selected for upload');
       }
 
-      // Upload quiz attachments if any
-      console.log('Selected quiz files for upload:', selectedQuizFiles);
-      if (selectedQuizFiles.length > 0) {
-        for (const file of selectedQuizFiles) {
-          try {
-            console.log('Uploading quiz attachment:', file.name, file.size, file.type);
-            const fileFormData = new FormData();
-            fileFormData.append('file', file);
-            fileFormData.append('attachmentType', 'quiz');
-            const uploadResponse = await adminApi.uploadEduContentAttachment(contentId, fileFormData);
-            console.log('Quiz attachment upload response:', uploadResponse);
-          } catch (attachmentError) {
-            console.error('Error uploading quiz attachment:', attachmentError);
-            showAlertMessage(`Content created but quiz attachment ${file.name} upload failed. You can upload it later.`, 'warning');
-          }
-        }
-      } else {
-        console.log('No quiz files selected for upload');
-      }
-      
       // Show success message
       setCreatedContent(response.data.content);
       setShowSuccess(true);
@@ -390,6 +463,7 @@ const AdminEduContentManagement = () => {
       resetContentForm();
       fetchContent();
       fetchStats();
+      onContentChange?.();
     } catch (error) {
       console.error('Error creating content:', error);
       console.error('Error details:', error.response?.data);
@@ -401,6 +475,100 @@ const AdminEduContentManagement = () => {
 
   const handleUpdateContent = async (e) => {
     e.preventDefault();
+    
+    // Validate all required fields before submitting
+    let isValid = true;
+    const allErrors = {};
+    
+    // Validate step 1 - required fields
+    if (!contentForm.title?.trim()) {
+      allErrors.title = 'Title is required';
+      isValid = false;
+    }
+    if (!contentForm.description?.trim()) {
+      allErrors.description = 'Description is required';
+      isValid = false;
+    }
+    if (!contentForm.content?.trim()) {
+      allErrors.content = 'Content is required';
+      isValid = false;
+    }
+    
+    // Validate step 2 - image is required (if no existing image, selectedImage must be present)
+    // Note: For edit, if there's already an imagePreview, we can allow update without new image
+    // But if imagePreview is cleared and no new image selected, that's an error
+    if (!imagePreview && !selectedImage) {
+      allErrors.image = 'Featured image is required';
+      isValid = false;
+    }
+    
+    // Validate step 3 (if quiz is enabled)
+    if (contentForm.hasQuiz) {
+      if (!contentForm.quizTitle?.trim()) {
+        allErrors.quizTitle = 'Quiz title is required';
+        isValid = false;
+      }
+      if (!contentForm.quizQuestions || contentForm.quizQuestions.length === 0) {
+        allErrors.quizQuestions = 'At least one question is required';
+        isValid = false;
+      }
+      if (contentForm.quizQuestions && contentForm.quizQuestions.length > 0) {
+        contentForm.quizQuestions.forEach((question, index) => {
+          if (!question.question?.trim()) {
+            allErrors[`quizQuestion_${index}`] = `Question ${index + 1} content is required`;
+            isValid = false;
+          }
+          const qType = question.type || 'multiple_choice';
+          if (qType === 'multiple_choice') {
+            const filled = (question.options || []).filter((o) => String(o).trim()).length;
+            if (filled < 2) {
+              allErrors[`quizQuestion_${index}`] = `Question ${index + 1}: enter at least two answer choices`;
+              isValid = false;
+            }
+          }
+        });
+      }
+    }
+    
+    if (!isValid) {
+      setFormErrors(allErrors);
+      setShakeForm(true);
+      setTimeout(() => setShakeForm(false), 500);
+      
+      // Determine which step contains the first error and navigate to it
+      const firstErrorField = Object.keys(allErrors)[0];
+      let targetStep = currentStep;
+      
+      if (firstErrorField === 'title' || firstErrorField === 'description' || firstErrorField === 'content') {
+        targetStep = 1;
+      } else if (firstErrorField === 'image' || firstErrorField === 'tags' || firstErrorField === 'themes') {
+        targetStep = 2;
+      } else if (firstErrorField.startsWith('quiz')) {
+        targetStep = 3;
+      }
+      
+      // Navigate to the step with the error
+      if (targetStep !== currentStep) {
+        setCurrentStep(targetStep);
+        // Wait for step to render, then scroll
+        setTimeout(() => {
+          const errorElement = document.querySelector(`[name="${firstErrorField}"]`) || 
+                              document.querySelector(`[data-field="${firstErrorField}"]`);
+          if (errorElement) {
+            errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      } else {
+        // Scroll to error element in current step
+        const errorElement = document.querySelector(`[name="${firstErrorField}"]`) || 
+                            document.querySelector(`[data-field="${firstErrorField}"]`);
+        if (errorElement) {
+          errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+      return;
+    }
+    
     try {
       setLoading(true);
       
@@ -423,6 +591,7 @@ const AdminEduContentManagement = () => {
       setEditingContent(null);
       resetContentForm();
       fetchContent();
+      onContentChange?.();
       
       // Show success message
       showAlertMessage('Content updated successfully!', 'success');
@@ -439,6 +608,7 @@ const AdminEduContentManagement = () => {
       await adminApi.publishEduContent(id);
       fetchContent();
       fetchStats();
+      onContentChange?.();
     } catch (error) {
       console.error('Error publishing content:', error);
     }
@@ -454,6 +624,7 @@ const AdminEduContentManagement = () => {
       await adminApi.archiveEduContent(contentToArchive._id);
       fetchContent();
       fetchStats();
+      onContentChange?.();
       setShowArchiveModal(false);
       setContentToArchive(null);
       showAlertMessage('Content archived successfully!', 'success');
@@ -471,8 +642,9 @@ const AdminEduContentManagement = () => {
   const confirmDeleteContent = async () => {
     try {
       await adminApi.deleteEduContent(contentToDelete._id);
-        fetchContent();
-        fetchStats();
+      fetchContent();
+      fetchStats();
+      onContentChange?.();
       setShowDeleteModal(false);
       setContentToDelete(null);
       showAlertMessage('Content deleted successfully!', 'success');
@@ -492,6 +664,7 @@ const AdminEduContentManagement = () => {
       await adminApi.publishEduContent(contentToRestore._id);
       fetchContent();
       fetchStats();
+      onContentChange?.();
       setShowRestoreModal(false);
       setContentToRestore(null);
       showAlertMessage('Content restored successfully!', 'success');
@@ -514,17 +687,16 @@ const AdminEduContentManagement = () => {
       timeToRead: content.timeToRead,
       difficulty: content.difficulty || 'beginner',
       featured: content.featured,
-      hasQuiz: !!content.quiz,
+      hasQuiz: !!(content.quiz && content.quiz.questions?.length),
       quizTitle: content.quiz?.title || '',
       quizDescription: content.quiz?.description || '',
-      quizTimeLimit: content.quiz?.timeLimit || 30,
-      quizPassingScore: content.quiz?.passingScore || 70,
+      quizTimeLimit: 30,
+      quizPassingScore: 70,
       quizMaxAttempts: content.quiz?.maxAttempts || 3,
       quizQuestions: content.quiz?.questions || []
     });
+    setShowQuizForm(!!content.quiz);
     
-    // Set image preview for existing image
-    console.log('Editing content image data:', content.image);
     if (content.image) {
       // Handle different image data formats
       let imageData = null;
@@ -537,7 +709,6 @@ const AdminEduContentManagement = () => {
       }
       
       if (imageData) {
-        console.log('Setting image preview with data:', imageData.substring(0, 50) + '...');
         setImagePreview(imageData);
         // Create a mock file object for the existing image
         const mockFile = {
@@ -547,12 +718,10 @@ const AdminEduContentManagement = () => {
         };
         setSelectedImage(mockFile);
       } else {
-        console.log('No valid image data found, clearing preview');
         setImagePreview(null);
         setSelectedImage(null);
       }
     } else {
-      console.log('No image object found, clearing preview');
       setImagePreview(null);
       setSelectedImage(null);
     }
@@ -561,11 +730,49 @@ const AdminEduContentManagement = () => {
   };
 
   const handleViewContent = (content) => {
-    console.log('Viewing content:', content);
-    console.log('Content attachments:', content.contentAttachments);
-    console.log('Quiz attachments:', content.quizAttachments);
-    console.log('Legacy attachments:', content.attachments);
     setViewingContent(content);
+  };
+
+  // View = open in new tab (preview, not download). Download = save file with original filename.
+  const getAttachmentFullUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    const base = 'http://localhost:5000';
+    return url.startsWith('/') ? base + url : base + '/' + url;
+  };
+  const openAttachmentInNewTab = (url, suggestedName) => {
+    const fullUrl = getAttachmentFullUrl(url);
+    if (!fullUrl) return;
+    // For Office docs, use Google Docs viewer so they open in-browser instead of downloading (only when URL is public)
+    const name = (suggestedName || '').toLowerCase();
+    const isOfficeDoc = /\.(docx?|xlsx?|pptx?|ods|odt)$/.test(name);
+    const isPublicUrl = fullUrl.includes('http') && !/localhost|127\.0\.0\.1/.test(fullUrl);
+    if (isOfficeDoc && isPublicUrl) {
+      window.open('https://docs.google.com/viewer?url=' + encodeURIComponent(fullUrl) + '&embedded=true', '_blank', 'noopener,noreferrer');
+    } else {
+      window.open(fullUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+  const downloadAttachmentWithName = async (url, suggestedName) => {
+    const fullUrl = getAttachmentFullUrl(url);
+    const name = suggestedName || 'download';
+    try {
+      const res = await fetch(fullUrl, { credentials: 'include' });
+      if (!res.ok) throw new Error(res.statusText);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = name;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('Download failed:', e);
+      openAttachmentInNewTab(url);
+    }
   };
 
   const handleSaveAsDraft = async () => {
@@ -604,13 +811,13 @@ const AdminEduContentManagement = () => {
         imageContentType,
         imageSize,
         imageOriginalName,
-        hasQuiz: Boolean(contentForm.hasQuiz),
+        hasQuiz: Boolean(contentForm.hasQuiz) && (contentForm.quizQuestions?.length > 0),
         quizTitle: contentForm.quizTitle || '',
         quizDescription: contentForm.quizDescription || '',
-        quizTimeLimit: contentForm.quizTimeLimit || 30,
-        quizPassingScore: contentForm.quizPassingScore || 70,
+        quizTimeLimit: 30,
+        quizPassingScore: 70,
         quizMaxAttempts: contentForm.quizMaxAttempts || 3,
-        quizQuestions: JSON.stringify(contentForm.quizQuestions || []),
+        quizQuestions: contentForm.hasQuiz && contentForm.quizQuestions?.length ? contentForm.quizQuestions : [],
         status: 'draft' // Save as draft
       };
       
@@ -618,9 +825,11 @@ const AdminEduContentManagement = () => {
       setShowCreateModal(false);
       setShowCancelOptions(false);
       resetContentForm();
-      fetchContent();
+      setContentStatusFilter('draft');
+      setCurrentPage(1);
+      await fetchContent();
       fetchStats();
-      
+      onContentChange?.();
       showAlertMessage('Content saved as draft successfully!', 'success');
     } catch (error) {
       console.error('Error saving draft:', error);
@@ -667,6 +876,7 @@ const AdminEduContentManagement = () => {
     setShowQuizForm(false);
     setCurrentStep(1);
     setFormErrors({});
+    setShakeForm(false);
     setShowSuccess(false);
     setCreatedContent(null);
     setShowCancelOptions(false);
@@ -682,8 +892,6 @@ const AdminEduContentManagement = () => {
         if (!contentForm.content?.trim()) errors.content = 'Content is required';
         break;
       case 2:
-        if (!contentForm.tags?.trim()) errors.tags = 'At least one tag is recommended';
-        if (!contentForm.themes?.trim()) errors.themes = 'At least one theme is recommended';
         if (!selectedImage) errors.image = 'Featured image is required';
         break;
       case 3:
@@ -701,23 +909,24 @@ const AdminEduContentManagement = () => {
         }
         break;
       case 4:
-        // Attachments are optional, no validation needed
-        break;
-      case 5:
         // Final preview step, no validation needed
         break;
     }
     
     setFormErrors(errors);
+    
+    // Trigger shake animation if validation fails
+    if (Object.keys(errors).length > 0) {
+      setShakeForm(true);
+      setTimeout(() => setShakeForm(false), 500);
+    }
+    
     return Object.keys(errors).length === 0;
   };
 
   const nextStep = () => {
-    // Skip validation for step 4 (attachments are optional)
-    if (currentStep === 4) {
-      setCurrentStep(prev => Math.min(prev + 1, 5));
-    } else if (validateStep(currentStep)) {
-      setCurrentStep(prev => Math.min(prev + 1, 5));
+    if (validateStep(currentStep)) {
+      setCurrentStep(prev => Math.min(prev + 1, 4));
     }
   };
 
@@ -733,40 +942,15 @@ const AdminEduContentManagement = () => {
 
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);
-    console.log('Files selected:', files);
-    
-    // Validate file formats
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'video/mp4', 'audio/mpeg', 'audio/wav'];
-    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx', '.mp4', '.mp3', '.wav'];
-    
+    const maxSize = 10 * 1024 * 1024; // 10MB
     const validFiles = files.filter(file => {
-      const isValidType = allowedTypes.includes(file.type);
-      const isValidExtension = allowedExtensions.some(ext => 
-        file.name.toLowerCase().endsWith(ext)
-      );
-      
-      console.log(`File ${file.name}: type=${file.type}, isValidType=${isValidType}, isValidExtension=${isValidExtension}`);
-      
-      if (!isValidType || !isValidExtension) {
-        showAlertMessage(`Invalid file format: ${file.name}. Allowed formats: ${allowedExtensions.join(', ')}`, 'warning');
-        return false;
-      }
-      
-      // Check file size (10MB limit)
-      if (file.size > 10 * 1024 * 1024) {
+      if (file.size > maxSize) {
         showAlertMessage(`File too large: ${file.name}. Maximum size is 10MB.`, 'warning');
         return false;
       }
-      
       return true;
     });
-    
-    console.log('Valid files:', validFiles);
-    setSelectedFiles(prev => {
-      const newFiles = [...prev, ...validFiles];
-      console.log('Updated selectedFiles:', newFiles);
-      return newFiles;
-    });
+    setSelectedFiles(prev => [...prev, ...validFiles]);
   };
 
   const handleImageSelect = (e) => {
@@ -810,7 +994,15 @@ const AdminEduContentManagement = () => {
 
   const handleQuizFileSelect = (event) => {
     const files = Array.from(event.target.files);
-    setSelectedQuizFiles(prev => [...prev, ...files]);
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    const validFiles = files.filter(file => {
+      if (file.size > maxSize) {
+        showAlertMessage(`File too large: ${file.name}. Maximum size is 10MB.`, 'warning');
+        return false;
+      }
+      return true;
+    });
+    setSelectedQuizFiles(prev => [...prev, ...validFiles]);
   };
 
   const removeQuizFile = (index) => {
@@ -819,14 +1011,14 @@ const AdminEduContentManagement = () => {
 
   const getFileIcon = (file) => {
     const type = file?.type || file?.mimeType || '';
-    if (type.startsWith('image/')) return '🖼️';
-    if (type.startsWith('video/')) return '🎥';
-    if (type.startsWith('audio/')) return '🎵';
-    if (type.includes('pdf')) return '📄';
-    if (type.includes('word')) return '📝';
-    if (type.includes('excel') || type.includes('spreadsheet')) return '📊';
-    if (type.includes('powerpoint') || type.includes('presentation')) return '📈';
-    return '📎';
+    if (type.startsWith('image/')) return '';
+    if (type.startsWith('video/')) return '';
+    if (type.startsWith('audio/')) return '';
+    if (type.includes('pdf')) return '';
+    if (type.includes('word')) return '';
+    if (type.includes('excel') || type.includes('spreadsheet')) return '';
+    if (type.includes('powerpoint') || type.includes('presentation')) return '';
+    return '';
   };
 
   const formatFileSize = (bytes) => {
@@ -860,7 +1052,13 @@ const AdminEduContentManagement = () => {
 
   const removeQuizQuestion = (index) => {
     const updatedQuestions = contentForm.quizQuestions.filter((_, i) => i !== index);
-    setContentForm({ ...contentForm, quizQuestions: updatedQuestions });
+    const noQuestionsLeft = updatedQuestions.length === 0;
+    setContentForm({
+      ...contentForm,
+      quizQuestions: updatedQuestions,
+      ...(noQuestionsLeft && { hasQuiz: false })
+    });
+    if (noQuestionsLeft) setShowQuizForm(false);
   };
 
   const clearCorrectAnswer = (index) => {
@@ -891,40 +1089,50 @@ const AdminEduContentManagement = () => {
 
 
   const getStatusBadge = (status) => {
+    if (status == null || status === '') {
+      return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">—</span>;
+    }
     const statusClasses = {
       draft: 'bg-yellow-100 text-yellow-800',
       published: 'bg-green-100 text-green-800',
       archived: 'bg-gray-100 text-gray-800'
     };
-    return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusClasses[status]}`}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </span>
-    );
+    const cls = statusClasses[status] ?? 'bg-gray-100 text-gray-800';
+    const label = String(status).charAt(0).toUpperCase() + String(status).slice(1);
+    return <span className={`px-2 py-1 text-xs font-medium rounded-full ${cls}`}>{label}</span>;
   };
 
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <>
+    {/* List/Create wrapper: only render when not in detail view to avoid empty min-h-screen blank space */}
+    {!viewingContent && (
+    <div className="min-h-screen min-w-0 max-w-full overflow-x-hidden bg-gray-50" style={{ scrollbarGutter: 'stable' }}>
+      {/* List view – unmounted when Create/Edit is active */}
+      {!showCreateModal && (<>
       {/* Content & Quizzes Sub-tabs */}
-      <div className="bg-white/80 rounded-lg shadow-sm border border-green-200/60 mb-6">
-        <div className="px-6 py-6 bg-gradient-to-r from-green-500 to-green-600 rounded-t-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center mr-4">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="bg-white/80 rounded-lg shadow-sm border border-green-200/60 mb-6 min-w-0">
+        <div className="px-4 sm:px-6 py-6 bg-gradient-to-r from-green-500 to-green-600 rounded-t-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center min-w-0">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 bg-white/20 rounded-lg flex items-center justify-center mr-3 sm:mr-4">
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
               </div>
-            <div>
-                <h2 className="text-xl font-bold text-white">Content Management</h2>
-                <p className="text-green-100 mt-1">Manage educational content, resources, and materials</p>
+            <div className="min-w-0">
+                <h2 className="text-lg sm:text-xl font-bold text-white truncate">Content Management</h2>
+                <p className="text-green-100 mt-1 text-sm sm:text-base break-words">Manage educational content, resources, and materials</p>
               </div>
             </div>
-            <div className="flex space-x-3">
+            <div className="flex flex-wrap gap-2 sm:gap-3 flex-shrink-0">
               <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 border border-white/30 transition-all duration-200 flex items-center space-x-2"
+                onClick={() => {
+                  setEditingContent(null);
+                  resetContentForm();
+                  setShowCreateModal(true);
+                }}
+                className="px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 border border-white/30 transition-all duration-200 flex items-center gap-2"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -937,7 +1145,7 @@ const AdminEduContentManagement = () => {
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 min-w-0">
         {/* API Status Notice */}
         {!apiAvailable && (
           <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -963,64 +1171,76 @@ const AdminEduContentManagement = () => {
         )}
 
         {/* Statistics Section */}
-        <div className="mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center">
+        <div className="mb-6 sm:mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+            <div className="group relative bg-gradient-to-br from-green-50 to-green-100 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-green-200/60 overflow-hidden p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-100/80 to-green-200/60"></div>
+              <div className="relative flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">📚</span>
+                  <div className="h-12 w-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
                   </div>
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Total Content</p>
-                  <p className="text-2xl font-semibold text-gray-900">{stats.totalContent || 0}</p>
+                  <p className="text-sm font-medium text-slate-600">Total Content</p>
+                  <p className="text-2xl font-bold text-slate-900">{stats.totalContent || 0}</p>
                 </div>
               </div>
             </div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center">
+            <div className="group relative bg-gradient-to-br from-green-50 to-green-100 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-green-200/60 overflow-hidden p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-100/80 to-green-200/60"></div>
+              <div className="relative flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-green-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">✅</span>
+                  <div className="h-12 w-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
                   </div>
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Published</p>
-                  <p className="text-2xl font-semibold text-gray-900">{stats.publishedContent || 0}</p>
+                  <p className="text-sm font-medium text-slate-600">Published</p>
+                  <p className="text-2xl font-bold text-slate-900">{stats.publishedContent || 0}</p>
                 </div>
               </div>
             </div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center">
+            <div className="group relative bg-gradient-to-br from-green-50 to-green-100 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-green-200/60 overflow-hidden p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-100/80 to-green-200/60"></div>
+              <div className="relative flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-yellow-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">📝</span>
+                  <div className="h-12 w-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
                   </div>
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Drafts</p>
-                  <p className="text-2xl font-semibold text-gray-900">{stats.draftContent || 0}</p>
+                  <p className="text-sm font-medium text-slate-600">Drafts</p>
+                  <p className="text-2xl font-bold text-slate-900">{stats.draftContent || 0}</p>
                 </div>
               </div>
             </div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center">
+            <div className="group relative bg-gradient-to-br from-green-50 to-green-100 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-green-200/60 overflow-hidden p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-100/80 to-green-200/60"></div>
+              <div className="relative flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-gray-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">📦</span>
+                  <div className="h-12 w-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8l6 6 6-6" />
+                    </svg>
                   </div>
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Archived</p>
-                  <p className="text-2xl font-semibold text-gray-900">{stats.archivedContent || 0}</p>
+                  <p className="text-sm font-medium text-slate-600">Archived</p>
+                  <p className="text-2xl font-bold text-slate-900">{stats.archivedContent || 0}</p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {loading ? (
+        {loading && content.length === 0 ? (
           <div className="text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
             <p className="mt-4 text-gray-600">Loading...</p>
@@ -1030,16 +1250,16 @@ const AdminEduContentManagement = () => {
              {/* Content */}
               <div className="space-y-6">
                 {/* Content List */}
-                <div className="bg-white rounded-lg shadow">
-                  <div className="px-6 py-4 border-b border-gray-200">
-                    <div className="flex items-center justify-between mb-4">
+                <div className={`relative bg-white rounded-lg shadow min-w-0 transition-opacity duration-150 ${loading ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <div className="px-4 sm:px-6 py-4 border-b border-gray-200 min-w-0">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
                       <h3 className="text-lg font-medium text-gray-900">Educational Content</h3>
                       
                       {/* Status Filter Tabs */}
-                      <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 bg-gray-100 rounded-lg p-1 w-full lg:w-auto">
                         <button
                           onClick={() => setContentStatusFilter('all')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-center whitespace-nowrap ${
                             contentStatusFilter === 'all'
                               ? 'bg-white text-gray-900 shadow-sm'
                               : 'text-gray-600 hover:text-gray-900'
@@ -1049,7 +1269,7 @@ const AdminEduContentManagement = () => {
                         </button>
                         <button
                           onClick={() => setContentStatusFilter('published')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-center whitespace-nowrap ${
                             contentStatusFilter === 'published'
                               ? 'bg-white text-gray-900 shadow-sm'
                               : 'text-gray-600 hover:text-gray-900'
@@ -1059,7 +1279,7 @@ const AdminEduContentManagement = () => {
                         </button>
                         <button
                           onClick={() => setContentStatusFilter('draft')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-center whitespace-nowrap ${
                             contentStatusFilter === 'draft'
                               ? 'bg-white text-gray-900 shadow-sm'
                               : 'text-gray-600 hover:text-gray-900'
@@ -1069,7 +1289,7 @@ const AdminEduContentManagement = () => {
                         </button>
                         <button
                           onClick={() => setContentStatusFilter('archived')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-center whitespace-nowrap ${
                             contentStatusFilter === 'archived'
                               ? 'bg-white text-gray-900 shadow-sm'
                               : 'text-gray-600 hover:text-gray-900'
@@ -1179,11 +1399,10 @@ const AdminEduContentManagement = () => {
                             Search: "{searchTerm}"
                             <button
                               onClick={() => setSearchTerm('')}
-                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-blue-400 hover:bg-blue-200 hover:text-blue-500"
+                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-blue-500 hover:bg-blue-200 hover:text-blue-600"
+                              aria-label="Clear search filter"
                             >
-                              <svg className="w-2 h-2" fill="currentColor" viewBox="0 0 8 8">
-                                <path d="m0 0 2 2m0 0 2 2m-2-2 2-2m-2 2-2 2" />
-                              </svg>
+                              <span className="text-[10px] leading-none font-bold">×</span>
                             </button>
                           </span>
                         )}
@@ -1192,11 +1411,10 @@ const AdminEduContentManagement = () => {
                             Category: {categoryOptions.find(opt => opt.value === categoryFilter)?.label}
                             <button
                               onClick={() => setCategoryFilter('all')}
-                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-green-400 hover:bg-green-200 hover:text-green-500"
+                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-green-600 hover:bg-green-200 hover:text-green-700"
+                              aria-label="Clear category filter"
                             >
-                              <svg className="w-2 h-2" fill="currentColor" viewBox="0 0 8 8">
-                                <path d="m0 0 2 2m0 0 2 2m-2-2 2-2m-2 2-2 2" />
-                              </svg>
+                              <span className="text-[10px] leading-none font-bold">×</span>
                             </button>
                           </span>
                         )}
@@ -1205,11 +1423,10 @@ const AdminEduContentManagement = () => {
                             Quiz: {quizOptions.find(opt => opt.value === quizFilter)?.label}
                             <button
                               onClick={() => setQuizFilter('all')}
-                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-orange-400 hover:bg-orange-200 hover:text-orange-500"
+                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-orange-600 hover:bg-orange-200 hover:text-orange-700"
+                              aria-label="Clear quiz filter"
                             >
-                              <svg className="w-2 h-2" fill="currentColor" viewBox="0 0 8 8">
-                                <path d="m0 0 2 2m0 0 2 2m-2-2 2-2m-2 2-2 2" />
-                              </svg>
+                              <span className="text-[10px] leading-none font-bold">×</span>
                             </button>
                           </span>
                         )}
@@ -1218,11 +1435,10 @@ const AdminEduContentManagement = () => {
                             Attachments: {attachmentsOptions.find(opt => opt.value === attachmentsFilter)?.label}
                             <button
                               onClick={() => setAttachmentsFilter('all')}
-                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-indigo-400 hover:bg-indigo-200 hover:text-indigo-500"
+                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-indigo-600 hover:bg-indigo-200 hover:text-indigo-700"
+                              aria-label="Clear attachments filter"
                             >
-                              <svg className="w-2 h-2" fill="currentColor" viewBox="0 0 8 8">
-                                <path d="m0 0 2 2m0 0 2 2m-2-2 2-2m-2 2-2 2" />
-                              </svg>
+                              <span className="text-[10px] leading-none font-bold">×</span>
                             </button>
                           </span>
                         )}
@@ -1231,23 +1447,22 @@ const AdminEduContentManagement = () => {
                             Status: {contentStatusFilter.charAt(0).toUpperCase() + contentStatusFilter.slice(1)}
                             <button
                               onClick={() => setContentStatusFilter('all')}
-                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-purple-400 hover:bg-purple-200 hover:text-purple-500"
+                              className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-purple-600 hover:bg-purple-200 hover:text-purple-700"
+                              aria-label="Clear status filter"
                             >
-                              <svg className="w-2 h-2" fill="currentColor" viewBox="0 0 8 8">
-                                <path d="m0 0 2 2m0 0 2 2m-2-2 2-2m-2 2-2 2" />
-                              </svg>
+                              <span className="text-[10px] leading-none font-bold">×</span>
                             </button>
                           </span>
                         )}
                       </div>
                     )}
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
+                  <div className="overflow-x-auto min-w-0 w-full">
+                    <table className="w-full min-w-[900px] divide-y divide-gray-200">
                       <thead className="bg-gray-50">
                         <tr>
                           <th 
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                             onClick={() => handleSort('title')}
                           >
                             <div className="flex items-center space-x-1">
@@ -1256,7 +1471,7 @@ const AdminEduContentManagement = () => {
                             </div>
                           </th>
                           <th 
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                             onClick={() => handleSort('category')}
                           >
                             <div className="flex items-center space-x-1">
@@ -1265,7 +1480,7 @@ const AdminEduContentManagement = () => {
                             </div>
                           </th>
                           <th 
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                             onClick={() => handleSort('status')}
                           >
                             <div className="flex items-center space-x-1">
@@ -1273,14 +1488,26 @@ const AdminEduContentManagement = () => {
                               {getSortIcon('status')}
                             </div>
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Quiz
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Attachments
+                          <th 
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            onClick={() => handleSort('hasQuiz')}
+                          >
+                            <div className="flex items-center space-x-1">
+                              <span>Quiz</span>
+                              {getSortIcon('hasQuiz')}
+                            </div>
                           </th>
                           <th 
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            onClick={() => handleSort('attachmentsCount')}
+                          >
+                            <div className="flex items-center space-x-1">
+                              <span>Attachments</span>
+                              {getSortIcon('attachmentsCount')}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                             onClick={() => handleSort('createdAt')}
                           >
                             <div className="flex items-center space-x-1">
@@ -1289,7 +1516,7 @@ const AdminEduContentManagement = () => {
                             </div>
                           </th>
                           <th 
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                            className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                             onClick={() => handleSort('updatedAt')}
                           >
                             <div className="flex items-center space-x-1">
@@ -1297,7 +1524,7 @@ const AdminEduContentManagement = () => {
                               {getSortIcon('updatedAt')}
                             </div>
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          <th className="px-2 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{ minWidth: '7rem' }}>
                             Actions
                           </th>
                         </tr>
@@ -1305,32 +1532,32 @@ const AdminEduContentManagement = () => {
                       <tbody className="bg-white divide-y divide-gray-200">
                         {content.map((item) => (
                           <tr key={item._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 w-80">
+                            <td className="px-4 sm:px-6 py-4 w-80">
                               <div className="flex items-start">
-                                <div className="w-full">
-                                  <div className="text-sm font-medium text-gray-900 break-words">
+                                <div className="w-full" style={{maxWidth: '17rem'}}>
+                                  <div className="text-sm font-medium text-gray-900 line-clamp-2 break-words" title={item.title}>
                                     {item.title}
                                   </div>
-                                  <div className="text-sm text-gray-500 break-words mt-1">
+                                  <div className="text-sm text-gray-500 truncate mt-0.5" title={item.description}>
                                     {item.description}
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                               {item.category.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                               {getStatusBadge(item.status)}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                               {item.quiz && (item.quiz.title || item.quiz.questions?.length > 0) ? (
                                 <span className="text-green-600">✓ Has Quiz</span>
                               ) : (
                                 <span className="text-gray-400">No Quiz</span>
                               )}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                               {(() => {
                                 const contentAttachments = item.contentAttachments || [];
                                 const quizAttachments = item.quizAttachments || [];
@@ -1344,7 +1571,7 @@ const AdminEduContentManagement = () => {
                                 );
                               })()}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                               <div className="flex flex-col">
                                 <span>{new Date(item.createdAt).toLocaleDateString()}</span>
                                 <span className="text-xs text-gray-400">
@@ -1352,7 +1579,7 @@ const AdminEduContentManagement = () => {
                                 </span>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                               <div className="flex flex-col">
                                 <span>{new Date(item.updatedAt).toLocaleDateString()}</span>
                                 <span className="text-xs text-gray-400">
@@ -1360,24 +1587,24 @@ const AdminEduContentManagement = () => {
                                 </span>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                              <div className="flex space-x-2">
+                            <td className="px-2 sm:px-4 py-2 whitespace-nowrap text-sm font-medium align-top" style={{ minWidth: '7rem' }}>
+                              <div className="flex flex-col items-start gap-0">
                                 <button
                                   onClick={() => handleViewContent(item)}
-                                  className="text-blue-600 hover:text-blue-900"
+                                  className="text-xs text-blue-600 hover:text-blue-900 py-0.5 block text-left"
                                 >
                                   View
                                 </button>
                                 <button
                                   onClick={() => handleEditContent(item)}
-                                  className="text-indigo-600 hover:text-indigo-900"
+                                  className="text-xs text-indigo-600 hover:text-indigo-900 py-0.5 block text-left"
                                 >
                                   Edit
                                 </button>
                                 {item.status === 'draft' && (
                                   <button
                                     onClick={() => handlePublishContent(item._id)}
-                                    className="text-green-600 hover:text-green-900"
+                                    className="text-xs text-green-600 hover:text-green-900 py-0.5 block text-left"
                                   >
                                     Publish
                                   </button>
@@ -1385,7 +1612,7 @@ const AdminEduContentManagement = () => {
                                 {item.status === 'published' && (
                                   <button
                                     onClick={() => handleArchiveContent(item)}
-                                    className="text-yellow-600 hover:text-yellow-900"
+                                    className="text-xs text-yellow-600 hover:text-yellow-900 py-0.5 block text-left"
                                   >
                                     Archive
                                   </button>
@@ -1393,14 +1620,14 @@ const AdminEduContentManagement = () => {
                                 {item.status === 'archived' && (
                                 <button
                                     onClick={() => handleRestoreContent(item)}
-                                    className="text-green-600 hover:text-green-900"
+                                    className="text-xs text-green-600 hover:text-green-900 py-0.5 block text-left"
                                   >
                                     Restore
                                   </button>
                                 )}
                                 <button
                                   onClick={() => handleDeleteContent(item)}
-                                  className="text-red-600 hover:text-red-900"
+                                  className="text-xs text-red-600 hover:text-red-900 py-0.5 block text-left"
                                 >
                                   Delete
                                 </button>
@@ -1436,91 +1663,23 @@ const AdminEduContentManagement = () => {
 
                 {/* Pagination */}
                 {content.length > 0 && (
-                  <div className="px-6 py-4 border-t border-gray-200">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm text-gray-700">
-                        Showing page {currentPage} of {totalPages} (Total items: {content.length})
+                  <div className="px-4 sm:px-6 py-4 border-t border-gray-200 min-w-0">
+                    <div className="flex flex-row items-center justify-between gap-3 flex-nowrap min-w-0">
+                      <div className="text-sm text-gray-700 flex items-center gap-2 flex-shrink-0">
+                        <span>Items:</span>
+                        <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{content.length}</span>
+                        <span>/</span>
+                        <span className="inline-flex items-center justify-center min-w-[2.5rem] px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md">{totalContentCount}</span>
+                        <span className="ml-1 whitespace-nowrap">— Page {currentPage} of {totalPages}</span>
                       </div>
-                    <nav className="flex space-x-2">
-                      <button
-                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                        disabled={currentPage === 1}
-                          className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Previous
-                      </button>
-                        {(() => {
-                          const maxVisiblePages = 5;
-                          const startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-                          const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-                          const pages = [];
-                          
-                          // Add first page and ellipsis if needed
-                          if (startPage > 1) {
-                            pages.push(
-                        <button
-                                key={1}
-                                onClick={() => setCurrentPage(1)}
-                                className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                              >
-                                1
-                              </button>
-                            );
-                            if (startPage > 2) {
-                              pages.push(
-                                <span key="ellipsis1" className="px-3 py-2 text-sm text-gray-500">
-                                  ...
-                                </span>
-                              );
-                            }
-                          }
-                          
-                          // Add visible page numbers
-                          for (let i = startPage; i <= endPage; i++) {
-                            pages.push(
-                              <button
-                                key={i}
-                                onClick={() => setCurrentPage(i)}
-                          className={`px-3 py-2 text-sm font-medium rounded-md ${
-                                  currentPage === i
-                              ? 'bg-green-500 text-white'
-                              : 'text-gray-500 bg-white border border-gray-300 hover:bg-gray-50'
-                          }`}
-                        >
-                                {i}
-                        </button>
-                            );
-                          }
-                          
-                          // Add ellipsis and last page if needed
-                          if (endPage < totalPages) {
-                            if (endPage < totalPages - 1) {
-                              pages.push(
-                                <span key="ellipsis2" className="px-3 py-2 text-sm text-gray-500">
-                                  ...
-                                </span>
-                              );
-                            }
-                            pages.push(
-                              <button
-                                key={totalPages}
-                                onClick={() => setCurrentPage(totalPages)}
-                                className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                              >
-                                {totalPages}
-                              </button>
-                            );
-                          }
-                          
-                          return pages;
-                        })()}
-                      <button
-                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                        disabled={currentPage === totalPages}
-                          className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
+                    <nav className="flex items-center gap-2 flex-nowrap flex-shrink-0">
+                      <button onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+                      {totalPages > 1 && (
+                        <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(goToPageInput, 10); if (!isNaN(n) && n >= 1 && n <= totalPages) { setCurrentPage(n); setGoToPageInput(''); } }}>
+                          <input type="number" min={1} max={totalPages} value={goToPageInput} onChange={(e) => setGoToPageInput(e.target.value.replace(/\D/g, '').slice(0, 5))} className="w-12 px-2 py-1.5 text-sm border border-gray-300 rounded-md text-center" placeholder={currentPage} aria-label="Page number" />
+                        </form>
+                      )}
+                      <button onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
                     </nav>
                   </div>
               </div>
@@ -1530,22 +1689,20 @@ const AdminEduContentManagement = () => {
           </>
         )}
       </div>
+      </>)}
 
-      {/* Create/Edit Content Modal */}
+      {/* Create/Edit Content – inline when active; list is unmounted */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[1280px] max-w-[95vw] shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-6 min-w-0">
+          <div className="relative p-4 sm:p-6 border border-gray-200 w-full shadow-lg rounded-lg bg-white min-w-0">
+            <div className="mt-3 min-w-0">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium text-gray-900">
                   {editingContent ? 'Edit Content' : 'Create New Content'}
                 </h3>
                 <button
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setEditingContent(null);
-                    resetContentForm();
-                  }}
+                  type="button"
+                  onClick={() => setShowCancelOptions(true)}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <span className="sr-only">Close</span>
@@ -1558,18 +1715,17 @@ const AdminEduContentManagement = () => {
               {/* Step Navigation */}
               <div className="mb-8">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-sm font-medium text-gray-700">Step {currentStep} of 5</h4>
+                  <h4 className="text-sm font-medium text-gray-700">Step {currentStep} of 4</h4>
                   <span className="text-sm text-gray-500">
                     {currentStep === 1 && 'Basic Information'}
-                    {currentStep === 2 && 'Tags & Settings'}
+                    {currentStep === 2 && 'Settings'}
                     {currentStep === 3 && 'Quiz (Optional)'}
-                    {currentStep === 4 && 'Attachments (Optional)'}
-                    {currentStep === 5 && 'Preview & Confirm'}
+                    {currentStep === 4 && 'Preview & Confirm'}
                   </span>
                 </div>
                 
-                <div className="flex space-x-2">
-                  {[1, 2, 3, 4, 5].map((step) => (
+                <div className="flex flex-wrap gap-2">
+                  {[1, 2, 3, 4].map((step) => (
                     <button
                       key={step}
                       type="button"
@@ -1584,7 +1740,7 @@ const AdminEduContentManagement = () => {
                 </div>
               </div>
               
-              <form onSubmit={editingContent ? handleUpdateContent : handleCreateContent} className="space-y-6">
+              <form onSubmit={editingContent ? handleUpdateContent : handleCreateContent} className={`space-y-6 ${shakeForm ? 'form-shake' : ''}`}>
                 {/* Step 1: Basic Information */}
                 {currentStep === 1 && (
                   <div className="space-y-6">
@@ -1618,9 +1774,10 @@ const AdminEduContentManagement = () => {
                         </label>
                         <input
                           type="text"
+                          name="title"
                           value={contentForm.title}
                           onChange={(e) => setContentForm({...contentForm, title: e.target.value})}
-                          className={`mt-1 block w-full border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
+                          className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
                             formErrors.title ? 'border-red-300' : 'border-gray-300'
                           }`}
                           placeholder="Enter a compelling title for your content"
@@ -1638,7 +1795,7 @@ const AdminEduContentManagement = () => {
                         <select
                           value={contentForm.category}
                           onChange={(e) => setContentForm({...contentForm, category: e.target.value})}
-                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
                         >
                           <option value="parliamentary_process">Parliamentary Process</option>
                           <option value="democracy">Democracy</option>
@@ -1656,10 +1813,11 @@ const AdminEduContentManagement = () => {
                         Description <span className="text-red-500">*</span>
                       </label>
                       <textarea
+                        name="description"
                         value={contentForm.description}
                         onChange={(e) => setContentForm({...contentForm, description: e.target.value})}
                         rows={3}
-                        className={`mt-1 block w-full border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
+                        className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
                           formErrors.description ? 'border-red-300' : 'border-gray-300'
                         }`}
                         placeholder="Brief description of what this content covers"
@@ -1675,10 +1833,11 @@ const AdminEduContentManagement = () => {
                         Content <span className="text-red-500">*</span>
                       </label>
                       <textarea
+                        name="content"
                         value={contentForm.content}
                         onChange={(e) => setContentForm({...contentForm, content: e.target.value})}
                         rows={8}
-                        className={`mt-1 block w-full border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
+                        className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
                           formErrors.content ? 'border-red-300' : 'border-gray-300'
                         }`}
                         placeholder="Write your educational content here. You can use multiple paragraphs to organize your information."
@@ -1695,7 +1854,7 @@ const AdminEduContentManagement = () => {
                 {currentStep === 2 && (
                   <div className="space-y-6">
                     {/* Error Messages */}
-                    {(formErrors.tags || formErrors.themes || formErrors.image) && (
+                    {formErrors.image && (
                       <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                         <div className="flex">
                           <svg className="w-5 h-5 text-red-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1705,84 +1864,14 @@ const AdminEduContentManagement = () => {
                             <h3 className="text-sm font-medium text-red-800">Please complete all required fields:</h3>
                             <ul className="mt-1 text-sm text-red-700 list-disc list-inside">
                               {formErrors.image && <li>{formErrors.image}</li>}
-                              {formErrors.tags && <li>{formErrors.tags}</li>}
-                              {formErrors.themes && <li>{formErrors.themes}</li>}
                             </ul>
                           </div>
                         </div>
                       </div>
                     )}
                     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                      <h3 className="text-lg font-medium text-green-900 mb-2">Tags & Settings</h3>
-                      <p className="text-sm text-green-700">Add tags and configure settings to help users find and understand your content.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                          Tags <span className="text-orange-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={contentForm.tags}
-                          onChange={(e) => setContentForm({...contentForm, tags: e.target.value})}
-                          placeholder="e.g., parliament, democracy, voting"
-                          className={`mt-1 block w-full border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
-                            formErrors.tags ? 'border-red-300' : 'border-gray-300'
-                          }`}
-                        />
-                        {formErrors.tags && (
-                          <p className="mt-1 text-sm text-red-600">{formErrors.tags}</p>
-                        )}
-                        <p className="mt-1 text-xs text-gray-500">Separate multiple tags with commas</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                          Themes <span className="text-orange-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={contentForm.themes}
-                          onChange={(e) => setContentForm({...contentForm, themes: e.target.value})}
-                          placeholder="e.g., Parliamentary System, Democratic Governance, Legislative Process"
-                          className={`mt-1 block w-full border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
-                            formErrors.themes ? 'border-red-300' : 'border-gray-300'
-                          }`}
-                        />
-                        {formErrors.themes && (
-                          <p className="mt-1 text-sm text-red-600">{formErrors.themes}</p>
-                        )}
-                        <p className="mt-1 text-xs text-gray-500">These will be displayed as theme badges on the user side</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Time to Read (minutes)</label>
-                        <input
-                          type="number"
-                          value={contentForm.timeToRead}
-                          onChange={(e) => setContentForm({...contentForm, timeToRead: parseInt(e.target.value) || 5})}
-                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                          min="1"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">Estimated reading time for users</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Difficulty Level</label>
-                        <select
-                          value={contentForm.difficulty}
-                          onChange={(e) => setContentForm({...contentForm, difficulty: e.target.value})}
-                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                        >
-                          <option value="beginner">Beginner</option>
-                          <option value="intermediate">Intermediate</option>
-                          <option value="advanced">Advanced</option>
-                        </select>
-                        <p className="mt-1 text-xs text-gray-500">Help users choose appropriate content</p>
-                      </div>
+                      <h3 className="text-lg font-medium text-green-900 mb-2">Settings</h3>
+                      <p className="text-sm text-green-700">Configure featured content and add a cover image.</p>
                     </div>
 
                     {/* Featured Content Checkbox */}
@@ -1809,6 +1898,7 @@ const AdminEduContentManagement = () => {
                       <div className="mt-2">
                     <input
                       type="file"
+                      data-field="image"
                           onChange={handleImageSelect}
                       className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                           accept=".jpg,.jpeg,.png,.gif"
@@ -1839,12 +1929,62 @@ const AdminEduContentManagement = () => {
                     )}
                   </div>
                 </div>
+
+                    {/* Attachments (optional) – at bottom of Step 2 */}
+                    <div className="mt-6 bg-white border border-gray-200 rounded-lg p-6">
+                      <h4 className="text-lg font-medium text-gray-900 mb-4">Attachments</h4>
+                      <p className="text-sm text-gray-600 mb-4">Optional files to support your content (documents, images, videos, etc.)</p>
+                      <div className="mt-1">
+                        <input
+                          type="file"
+                          multiple
+                          onChange={handleFileSelect}
+                          className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                          accept="*/*"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">All file types allowed (max 10MB per file)</p>
+                        {selectedFiles.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-sm font-medium text-gray-700">Selected files:</p>
+                            <div className="grid grid-cols-1 gap-2">
+                              {selectedFiles.map((file, index) => (
+                                <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-lg">{getFileIcon(file)}</span>
+                                    <div>
+                                      <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                                      <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const url = URL.createObjectURL(file);
+                                        window.open(url, '_blank');
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 p-1 text-xs"
+                                      title="Preview file"
+                                    >
+                                      Preview
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeFile(index)}
+                                      className="text-red-600 hover:text-red-800 p-1"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
-
-
-
-                
 
                 {/* Step 3: Quiz Section */}
                 {currentStep === 3 && (
@@ -1897,11 +2037,12 @@ const AdminEduContentManagement = () => {
                           <label className="block text-sm font-medium text-gray-700">Quiz Title</label>
                           <input
                             type="text"
+                            name="quizTitle"
                             value={contentForm.quizTitle}
                             onChange={(e) => {
                               setContentForm({...contentForm, quizTitle: e.target.value});
                             }}
-                            className={`mt-1 block w-full rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
+                            className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
                               formErrors.quizTitle ? 'border-red-300' : 'border-gray-300'
                             }`}
                             placeholder="Enter quiz title"
@@ -1916,42 +2057,8 @@ const AdminEduContentManagement = () => {
                             type="text"
                             value={contentForm.quizDescription}
                             onChange={(e) => setContentForm({...contentForm, quizDescription: e.target.value})}
-                            className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
+                            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
                             placeholder="Enter quiz description"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Time Limit (minutes)</label>
-                          <input
-                            type="number"
-                            value={contentForm.quizTimeLimit}
-                            onChange={(e) => setContentForm({...contentForm, quizTimeLimit: parseInt(e.target.value) || 30})}
-                            className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                            min="1"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Passing Score (%)</label>
-                          <input
-                            type="number"
-                            value={contentForm.quizPassingScore}
-                            onChange={(e) => setContentForm({...contentForm, quizPassingScore: parseInt(e.target.value) || 70})}
-                            className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                            min="1"
-                            max="100"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Max Attempts</label>
-                          <input
-                            type="number"
-                            value={contentForm.quizMaxAttempts}
-                            onChange={(e) => setContentForm({...contentForm, quizMaxAttempts: parseInt(e.target.value) || 3})}
-                            className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                            min="1"
                           />
                         </div>
                       </div>
@@ -1994,7 +2101,7 @@ const AdminEduContentManagement = () => {
                                     updateQuizQuestion(index, 'question', e.target.value);
                                   }}
                                   rows={2}
-                                  className={`mt-1 block w-full rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
+                                  className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 ${
                                     formErrors[`quizQuestion_${index}`] ? 'border-red-300' : 'border-gray-300'
                                   }`}
                                   placeholder="Enter your question"
@@ -2009,11 +2116,10 @@ const AdminEduContentManagement = () => {
                                 <select
                                   value={question.type}
                                   onChange={(e) => updateQuizQuestion(index, 'type', e.target.value)}
-                                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
+                                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
                                 >
                                   <option value="multiple_choice">Multiple Choice</option>
                                   <option value="true_false">True/False</option>
-                                  <option value="short_answer">Short Answer</option>
                                 </select>
                               </div>
 
@@ -2218,67 +2324,15 @@ const AdminEduContentManagement = () => {
                                 </div>
                               )}
 
-                              {question.type === 'short_answer' && (
-                                <div>
-                                  <label className="block text-sm font-medium text-gray-700 mb-2">Correct Answer</label>
-                                  <p className="text-sm text-gray-500 mb-3">Enter the expected answer for this short answer question</p>
-                                  <div className="relative">
-                                  <input
-                                    type="text"
-                                    value={question.correctAnswer}
-                                    onChange={(e) => updateQuizQuestion(index, 'correctAnswer', e.target.value)}
-                                      className={`block w-full border-2 rounded-lg shadow-sm focus:ring-green-500 focus:border-green-500 transition-colors ${
-                                        question.correctAnswer 
-                                          ? 'border-green-300 bg-green-50' 
-                                          : 'border-gray-300'
-                                      }`}
-                                    placeholder="Enter the correct answer"
-                                  />
-                                    {question.correctAnswer && (
-                                      <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                                        <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                        </svg>
-                                      </div>
-                                    )}
-                                  </div>
-                                  
-                                  {question.correctAnswer && (
-                                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                                      <div className="flex items-center">
-                                        <svg className="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                        </svg>
-                                        <span className="text-sm font-medium text-green-800">
-                                          Correct answer set: "{question.correctAnswer}"
-                                        </span>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                  <label className="block text-sm font-medium text-gray-700">Points</label>
-                                  <input
-                                    type="number"
-                                    value={question.points}
-                                    onChange={(e) => updateQuizQuestion(index, 'points', parseInt(e.target.value) || 1)}
-                                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                                    min="1"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-sm font-medium text-gray-700">Explanation (optional)</label>
-                                  <input
-                                    type="text"
-                                    value={question.explanation}
-                                    onChange={(e) => updateQuizQuestion(index, 'explanation', e.target.value)}
-                                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
-                                    placeholder="Explain why this is correct"
-                                  />
-                                </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700">Explanation (optional)</label>
+                                <input
+                                  type="text"
+                                  value={question.explanation}
+                                  onChange={(e) => updateQuizQuestion(index, 'explanation', e.target.value)}
+                                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500"
+                                  placeholder="Explain why this is correct"
+                                />
                               </div>
 
                             </div>
@@ -2297,130 +2351,8 @@ const AdminEduContentManagement = () => {
                   </div>
                 )}
 
-                {/* Step 4: Attachments (Optional) */}
+                {/* Step 4: Preview & Confirm */}
                 {currentStep === 4 && (
-                  <div className="space-y-6">
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <h3 className="text-lg font-medium text-blue-900 mb-2">Attachments (Optional)</h3>
-                      <p className="text-sm text-blue-700">Add additional files to support your content. These are completely optional.</p>
-                    </div>
-
-                    {/* Content Attachments */}
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h4 className="text-lg font-medium text-gray-900 mb-4">📄 Content Attachments</h4>
-                      <p className="text-sm text-gray-600 mb-4">Files that support the main content (documents, images, videos, etc.)</p>
-                      <div className="mt-1">
-                        <input
-                          type="file"
-                          multiple
-                          onChange={handleFileSelect}
-                          className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
-                          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.mp4,.avi,.mov,.mp3,.wav"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">Supported: Images, Videos, Audio, PDF, Office documents</p>
-                        
-                        {selectedFiles.length > 0 && (
-                          <div className="mt-3 space-y-2">
-                            <p className="text-sm font-medium text-gray-700">Selected Content Files:</p>
-                            <div className="grid grid-cols-1 gap-2">
-                              {selectedFiles.map((file, index) => (
-                                <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-lg">{getFileIcon(file)}</span>
-                                    <div>
-                                      <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                                      <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const url = URL.createObjectURL(file);
-                                        window.open(url, '_blank');
-                                      }}
-                                      className="text-blue-600 hover:text-blue-800 p-1 text-xs"
-                                      title="Preview file"
-                                    >
-                                      👁️ Preview
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeFile(index)}
-                                      className="text-red-600 hover:text-red-800 p-1"
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      </div>
-
-                      {/* Quiz Attachments */}
-                    {contentForm.hasQuiz && contentForm.quizQuestions.length > 0 && (
-                      <div className="bg-white border border-gray-200 rounded-lg p-6">
-                        <h4 className="text-lg font-medium text-gray-900 mb-4">🧩 Quiz Attachments</h4>
-                        <p className="text-sm text-gray-600 mb-4">Files specifically for quiz questions (images, documents, etc.)</p>
-                        <div className="mt-1">
-                          <input
-                            type="file"
-                            multiple
-                            onChange={handleQuizFileSelect}
-                            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
-                            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.mp4,.avi,.mov,.mp3,.wav"
-                          />
-                          <p className="mt-1 text-xs text-gray-500">Additional files for quiz questions</p>
-                          
-                          {selectedQuizFiles.length > 0 && (
-                            <div className="mt-3 space-y-2">
-                              <p className="text-sm font-medium text-gray-700">Selected Quiz Files:</p>
-                              <div className="grid grid-cols-1 gap-2">
-                                {selectedQuizFiles.map((file, index) => (
-                                  <div key={index} className="flex items-center justify-between p-2 bg-purple-50 rounded-lg border border-purple-200">
-                                    <div className="flex items-center space-x-2">
-                                      <span className="text-lg">{getFileIcon(file)}</span>
-                                      <div>
-                                        <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                                        <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const url = URL.createObjectURL(file);
-                                          window.open(url, '_blank');
-                                        }}
-                                        className="text-blue-600 hover:text-blue-800 p-1 text-xs"
-                                        title="Preview file"
-                                      >
-                                        👁️ Preview
-                                      </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeQuizFile(index)}
-                                      className="text-red-600 hover:text-red-800 p-1"
-                                    >
-                                      ✕
-                                    </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                      </div>
-                    </div>
-                  )}
-                  </div>
-                )}
-
-                {/* Step 5: Preview & Confirm */}
-                {currentStep === 5 && (
                   <div className="space-y-6">
                     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                       <h3 className="text-lg font-medium text-green-900 mb-2">Preview & Confirm</h3>
@@ -2454,22 +2386,6 @@ const AdminEduContentManagement = () => {
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                               {contentForm.category?.replace('_', ' ').toUpperCase()}
                             </span>
-                            <span className="text-sm text-gray-500">{contentForm.timeToRead} min read</span>
-                          </div>
-                          
-                          <h3 className="text-xl font-bold text-gray-900 mb-2 line-clamp-2">
-                            {contentForm.title || 'No title provided'}
-                          </h3>
-                          
-                          <p className="text-gray-600 mb-4 line-clamp-3">
-                            {contentForm.description || 'No description provided'}
-                          </p>
-                          
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-sm text-gray-500">Difficulty:</span>
-                              <span className="text-sm font-medium text-gray-900 capitalize">{contentForm.difficulty}</span>
-                            </div>
                             {contentForm.featured && (
                               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                                 ⭐ Featured
@@ -2477,17 +2393,13 @@ const AdminEduContentManagement = () => {
                             )}
                           </div>
                           
-                          {contentForm.tags && (
-                            <div className="mt-3">
-                              <div className="flex flex-wrap gap-1">
-                                {contentForm.tags.split(',').map((tag, index) => (
-                                  <span key={index} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                    #{tag.trim()}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                          <h3 className="text-xl font-bold text-gray-900 mb-2 line-clamp-2">
+                            {contentForm.title || 'No title provided'}
+                          </h3>
+                          
+                          <p className="text-gray-600 line-clamp-3">
+                            {contentForm.description || 'No description provided'}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -2507,41 +2419,15 @@ const AdminEduContentManagement = () => {
                           <p className="text-gray-900">{contentForm.description || 'No description provided'}</p>
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Category</label>
-                            <p className="text-gray-900 capitalize">{contentForm.category?.replace('_', ' ')}</p>
-                          </div>
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Difficulty</label>
-                            <p className="text-gray-900 capitalize">{contentForm.difficulty}</p>
-                          </div>
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Category</label>
+                          <p className="text-gray-900 capitalize">{contentForm.category?.replace('_', ' ')}</p>
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Time to Read</label>
-                            <p className="text-gray-900">{contentForm.timeToRead} minutes</p>
-                          </div>
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Featured</label>
-                            <p className="text-gray-900">{contentForm.featured ? 'Yes' : 'No'}</p>
-                          </div>
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Featured</label>
+                          <p className="text-gray-900">{contentForm.featured ? 'Yes' : 'No'}</p>
                         </div>
-                        
-                        {contentForm.tags && (
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Tags</label>
-                            <p className="text-gray-900">{contentForm.tags}</p>
-                          </div>
-                        )}
-                        
-                        {contentForm.themes && (
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Themes</label>
-                            <p className="text-gray-900">{contentForm.themes}</p>
-                          </div>
-                        )}
                         
                         {contentForm.hasQuiz && (
                           <div>
@@ -2553,7 +2439,7 @@ const AdminEduContentManagement = () => {
                         <div>
                           <label className="text-sm font-medium text-gray-500">Attachments</label>
                           <p className="text-gray-900">
-                            {selectedFiles.length} content files, {selectedQuizFiles.length} quiz files
+                            {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}
                           </p>
                       </div>
                     </div>
@@ -2648,14 +2534,6 @@ const AdminEduContentManagement = () => {
                               </div>
                             )}
 
-                            {question.type === 'short_answer' && (
-                              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                                <span className="text-sm font-medium text-green-800">
-                                  Correct Answer: "{question.correctAnswer}"
-                                </span>
-                              </div>
-                            )}
-
                             {question.explanation && (
                               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                                 <h6 className="text-sm font-medium text-blue-900 mb-1">Explanation:</h6>
@@ -2668,71 +2546,34 @@ const AdminEduContentManagement = () => {
                     )}
 
                     {/* Attachments Preview Section */}
-                    {(selectedFiles.length > 0 || selectedQuizFiles.length > 0) && (
+                    {selectedFiles.length > 0 && (
                       <div className="bg-white border border-gray-200 rounded-lg p-6">
                         <h4 className="text-lg font-medium text-gray-900 mb-4">Attachments Preview</h4>
-                        
-                        {selectedFiles.length > 0 && (
-                          <div className="mb-6">
-                            <h5 className="text-lg font-semibold text-gray-900 mb-4">📎 Content Attachments</h5>
-                            <div className="space-y-4">
-                              {selectedFiles.map((file, index) => (
-                                <div key={index} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                                  <span className="text-2xl">{getFileIcon(file)}</span>
-                                  <div className="flex-1">
-                                    <div className="text-sm font-medium text-gray-900">{file.name}</div>
-                                    <div className="text-xs text-gray-500">{formatFileSize(file.size)}</div>
-                                  </div>
-                                  <div className="flex space-x-2">
-                                    <button
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        // Create a preview URL for the file
-                                        const url = URL.createObjectURL(file);
-                                        window.open(url, '_blank', 'noopener,noreferrer');
-                                      }}
-                                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 transition-colors"
-                                    >
-                                      View
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
+                        <div className="space-y-4">
+                          {selectedFiles.map((file, index) => (
+                            <div key={index} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                              <span className="text-2xl">{getFileIcon(file)}</span>
+                              <div className="flex-1">
+                                <div className="text-sm font-medium text-gray-900">{file.name}</div>
+                                <div className="text-xs text-gray-500">{formatFileSize(file.size)}</div>
+                              </div>
+                              <div className="flex space-x-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const url = URL.createObjectURL(file);
+                                    window.open(url, '_blank', 'noopener,noreferrer');
+                                  }}
+                                  className="px-3 py-1 bg-green-600 text-white text-xs rounded-md hover:bg-green-700 transition-colors"
+                                >
+                                  View
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        )}
-
-                        {selectedQuizFiles.length > 0 && (
-                          <div>
-                            <h5 className="text-lg font-semibold text-gray-900 mb-4">🧩 Quiz Attachments</h5>
-                            <div className="space-y-4">
-                              {selectedQuizFiles.map((file, index) => (
-                                <div key={index} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                                  <span className="text-2xl">{getFileIcon(file)}</span>
-                                  <div className="flex-1">
-                                    <div className="text-sm font-medium text-gray-900">{file.name}</div>
-                                    <div className="text-xs text-gray-500">{formatFileSize(file.size)}</div>
-                                  </div>
-                                  <div className="flex space-x-2">
-                                    <button
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        // Create a preview URL for the file
-                                        const url = URL.createObjectURL(file);
-                                        window.open(url, '_blank', 'noopener,noreferrer');
-                                      }}
-                                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 transition-colors"
-                                    >
-                                      View
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2760,7 +2601,7 @@ const AdminEduContentManagement = () => {
                   </div>
                   
                   <div className="flex space-x-3">
-                    {currentStep < 4 ? (
+                    {currentStep < 3 ? (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -2772,7 +2613,7 @@ const AdminEduContentManagement = () => {
                       >
                         Next →
                       </button>
-                    ) : currentStep === 4 ? (
+                    ) : currentStep === 3 ? (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -2801,10 +2642,15 @@ const AdminEduContentManagement = () => {
         </div>
       )}
 
-      {/* Success Modal */}
+      </div>
+    )}
+
+      {createPortal(
+        <>
+      {/* Modals – portaled to body so they stay viewport-centered when list is scrolled */}
       {showSuccess && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[500px] max-w-[95vw] shadow-lg rounded-md bg-white">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="relative p-6 border w-[500px] max-w-[95vw] shadow-lg rounded-md bg-white" onClick={(e) => e.stopPropagation()}>
             <div className="mt-3">
               <div className="flex items-center justify-center w-12 h-12 mx-auto bg-green-100 rounded-full mb-4">
                 <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2831,7 +2677,10 @@ const AdminEduContentManagement = () => {
                 
                 <div className="flex space-x-3 justify-center">
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       setShowSuccess(false);
                       setCreatedContent(null);
                     }}
@@ -2848,8 +2697,8 @@ const AdminEduContentManagement = () => {
 
       {/* Cancel Options Modal */}
       {showCancelOptions && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[400px] max-w-[95vw] shadow-lg rounded-md bg-white">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="relative p-6 border w-[400px] max-w-[95vw] shadow-lg rounded-md bg-white" onClick={(e) => e.stopPropagation()}>
             <div className="mt-3">
               <div className="text-center">
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
@@ -2866,7 +2715,8 @@ const AdminEduContentManagement = () => {
                   {/* Only show "Save as Draft" for creating new content, not editing */}
                   {!editingContent && (
                     <button
-                      onClick={handleSaveAsDraft}
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveAsDraft(); }}
                       disabled={loading}
                       className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 disabled:opacity-50"
                     >
@@ -2875,14 +2725,16 @@ const AdminEduContentManagement = () => {
                   )}
                   
                   <button
-                    onClick={handleDiscardChanges}
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDiscardChanges(); }}
                     className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
                   >
                     Discard Changes
                   </button>
                   
                   <button
-                    onClick={() => setShowCancelOptions(false)}
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowCancelOptions(false); }}
                     className="w-full px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                   >
                     Continue {editingContent ? 'Editing' : 'Creating'}
@@ -2896,8 +2748,8 @@ const AdminEduContentManagement = () => {
 
       {/* Discard Changes Confirmation Modal */}
       {showDiscardConfirm && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-          <div className="relative p-6 border w-[400px] max-w-[95vw] shadow-lg rounded-md bg-white">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="relative p-6 border w-[400px] max-w-[95vw] shadow-lg rounded-md bg-white" onClick={(e) => e.stopPropagation()}>
             <div className="mt-3">
               <div className="text-center">
                 <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-red-100 rounded-full">
@@ -2912,13 +2764,15 @@ const AdminEduContentManagement = () => {
                 
                 <div className="flex space-x-3">
                   <button
-                    onClick={() => setShowDiscardConfirm(false)}
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDiscardConfirm(false); }}
                     className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={confirmDiscardChanges}
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); confirmDiscardChanges(); }}
                     className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700"
                   >
                     Discard Changes
@@ -2930,25 +2784,29 @@ const AdminEduContentManagement = () => {
         </div>
       )}
 
-      {/* View Content Modal - User View Style */}
+      </>,
+      document.body
+    )}
+
+      {/* Detail view – full-height so dashboard green doesn’t show; card stays at top */}
       {viewingContent && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-            {/* Header */}
-            <div className="bg-white shadow-sm border-b border-gray-200">
-              <div className="max-w-4xl mx-auto px-6 py-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">
+        <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 -mt-8">
+            <>
+            {/* Sticky header – sticks to the page viewport while scrolling */}
+            <div className="sticky top-0 z-10 bg-white shadow-sm border-b border-gray-200">
+              <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 min-w-0">
+                <div className="flex flex-row items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-1 truncate" title={viewingContent.title}>
                       {viewingContent.title}
                     </h1>
-                    <p className="text-lg text-gray-600">
+                    <p className="text-base sm:text-lg text-gray-600 truncate">
                       {viewingContent.category?.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </p>
                   </div>
                   <button
                     onClick={() => setViewingContent(null)}
-                    className="p-3 hover:bg-gray-100 rounded-full transition-colors"
+                    className="flex-shrink-0 p-3 hover:bg-gray-100 rounded-full transition-colors"
                   >
                     <svg className="h-6 w-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2958,50 +2816,14 @@ const AdminEduContentManagement = () => {
               </div>
             </div>
 
-            <div className="max-w-4xl mx-auto px-6 py-8">
+            {/* Content – normal document flow; gap between title and content */}
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-8 pb-6 sm:pt-10 sm:pb-8 min-w-0">
               {/* Content Section */}
               <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mb-8">
                 <div className="p-8">
                   <h2 className="text-2xl font-bold text-gray-900 mb-6">Content</h2>
                   
-                  {/* Image */}
-                  <div className="mb-6">
-                    <div className="h-64 bg-gradient-to-br from-emerald-100 to-teal-100 rounded-lg overflow-hidden">
-                      {viewingContent.image && viewingContent.image.data ? (
-                        <img 
-                          src={viewingContent.image.data} 
-                          alt={viewingContent.title}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <div className="text-center">
-                            <svg className="w-12 h-12 text-emerald-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                            </svg>
-                            <p className="text-emerald-600 font-medium">Educational Content</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* Themes */}
-                  {viewingContent.themes && viewingContent.themes.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Related Themes</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {viewingContent.themes.map((theme, index) => (
-                          <span 
-                            key={index}
-                            className="px-3 py-1 bg-indigo-100 text-indigo-800 text-sm font-medium rounded-full"
-                          >
-                            {theme}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {/* Description */}
                   <div className="mb-6">
@@ -3019,27 +2841,10 @@ const AdminEduContentManagement = () => {
                     </div>
                   </div>
 
-                  {/* Tags */}
-                  {viewingContent.tags && viewingContent.tags.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Tags</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {viewingContent.tags.map((tag, index) => (
-                          <span 
-                            key={index}
-                            className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Content Attachments */}
+                  {/* Attachments */}
                   {viewingContent.contentAttachments && viewingContent.contentAttachments.length > 0 && (
                     <div className="mt-8 pt-6 border-t border-gray-200">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">📎 Content Attachments</h3>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Attachments</h3>
                       <div className="space-y-4">
                         {viewingContent.contentAttachments.map((attachment, index) => (
                           <div key={index} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
@@ -3050,31 +2855,26 @@ const AdminEduContentManagement = () => {
                             </div>
                             <div className="flex space-x-2">
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  // Convert relative URL to full backend URL
-                                  const fullUrl = attachment.url.startsWith('http') 
-                                    ? attachment.url 
-                                    : `http://localhost:5000${attachment.url}`;
-                                  console.log('Opening file:', fullUrl);
-                                  console.log('Original URL:', attachment.url);
-                                  window.open(fullUrl, '_blank', 'noopener,noreferrer');
+                                  openAttachmentInNewTab(attachment.url, attachment.originalName || attachment.name);
                                 }}
                                 className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded hover:bg-blue-200"
                               >
-                                👁️ View
+                                View
                               </button>
                               <button
-                                onClick={() => {
-                                  const link = document.createElement('a');
-                                  link.href = attachment.url;
-                                  link.download = attachment.originalName || attachment.name;
-                                  link.click();
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  downloadAttachmentWithName(attachment.url, attachment.originalName || attachment.name);
                                 }}
                                 className="px-3 py-1 text-xs font-medium text-green-600 bg-green-100 rounded hover:bg-green-200"
                               >
-                                📥 Download
+                                Download
                               </button>
                             </div>
                           </div>
@@ -3141,52 +2941,6 @@ const AdminEduContentManagement = () => {
                       </div>
                     ))}
 
-                    {/* Quiz Attachments */}
-                    {viewingContent.quizAttachments && viewingContent.quizAttachments.length > 0 && (
-                      <div className="mt-8 pt-6 border-t border-gray-200">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">🧩 Quiz Attachments</h3>
-                        <div className="space-y-4">
-                          {viewingContent.quizAttachments.map((attachment, index) => (
-                            <div key={index} className="flex items-center space-x-4 p-4 border border-purple-200 rounded-lg hover:bg-purple-50">
-                              <span className="text-2xl">{getFileIcon(attachment)}</span>
-                              <div className="flex-1">
-                                <div className="text-sm font-medium text-gray-900">{attachment.originalName || attachment.name}</div>
-                                <div className="text-xs text-gray-500">{formatFileSize(attachment.size)}</div>
-                              </div>
-                              <div className="flex space-x-2">
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    // Convert relative URL to full backend URL
-                                    const fullUrl = attachment.url.startsWith('http') 
-                                      ? attachment.url 
-                                      : `http://localhost:5000${attachment.url}`;
-                                    console.log('Opening file:', fullUrl);
-                                    console.log('Original URL:', attachment.url);
-                                    window.open(fullUrl, '_blank', 'noopener,noreferrer');
-                                  }}
-                                  className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded hover:bg-blue-200"
-                                >
-                                  👁️ View
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    const link = document.createElement('a');
-                                    link.href = attachment.url;
-                                    link.download = attachment.originalName || attachment.name;
-                                    link.click();
-                                  }}
-                                  className="px-3 py-1 text-xs font-medium text-green-600 bg-green-100 rounded hover:bg-green-200"
-                                >
-                                  📥 Download
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -3200,25 +2954,21 @@ const AdminEduContentManagement = () => {
                     <span className="font-medium">Status:</span> {getStatusBadge(viewingContent.status)}
                   </div>
                   <div>
-                    <span className="font-medium">Difficulty:</span> {viewingContent.difficulty?.charAt(0).toUpperCase() + viewingContent.difficulty?.slice(1)}
-                  </div>
-                  <div>
-                    <span className="font-medium">Time to Read:</span> {viewingContent.timeToRead} minutes
-                  </div>
-                  <div>
                     <span className="font-medium">Created:</span> {new Date(viewingContent.createdAt).toLocaleDateString()}
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+      </>
         </div>
       )}
 
+    {createPortal(
+      <>
       {/* In-App Alert Modal */}
       {showAlert && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-w-[95vw] mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <div className="flex items-center">
                 <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
@@ -3261,7 +3011,8 @@ const AdminEduContentManagement = () => {
               </div>
               <div className="mt-6 flex justify-end">
                 <button
-                  onClick={() => setShowAlert(false)}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowAlert(false); }}
                   className={`px-4 py-2 rounded-md text-sm font-medium ${
                     alertType === 'error' ? 'bg-red-600 hover:bg-red-700 text-white' : 
                     alertType === 'success' ? 'bg-green-600 hover:bg-green-700 text-white' : 
@@ -3278,8 +3029,8 @@ const AdminEduContentManagement = () => {
 
       {/* Archive Confirmation Modal */}
       {showArchiveModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-w-[95vw] mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -3298,13 +3049,15 @@ const AdminEduContentManagement = () => {
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
-                  onClick={() => setShowArchiveModal(false)}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowArchiveModal(false); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={confirmArchiveContent}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); confirmArchiveContent(); }}
                   className="px-4 py-2 text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 rounded-md"
                 >
                   Archive
@@ -3317,8 +3070,8 @@ const AdminEduContentManagement = () => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-w-[95vw] mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -3337,13 +3090,15 @@ const AdminEduContentManagement = () => {
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
-                  onClick={() => setShowDeleteModal(false)}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDeleteModal(false); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={confirmDeleteContent}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); confirmDeleteContent(); }}
                   className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md"
                 >
                   Delete
@@ -3356,8 +3111,8 @@ const AdminEduContentManagement = () => {
 
       {/* Restore Confirmation Modal */}
       {showRestoreModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-w-[95vw] mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -3376,13 +3131,15 @@ const AdminEduContentManagement = () => {
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
-                  onClick={() => setShowRestoreModal(false)}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowRestoreModal(false); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={confirmRestoreContent}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); confirmRestoreContent(); }}
                   className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md"
                 >
                   Restore
@@ -3393,7 +3150,11 @@ const AdminEduContentManagement = () => {
         </div>
       )}
 
-    </div>
+        </>,
+        document.body
+      )}
+
+    </>
   );
 };
 
