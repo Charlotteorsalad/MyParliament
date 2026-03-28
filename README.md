@@ -17,8 +17,6 @@
 5. [Features — Admin Side](#5-features--admin-side)
 6. [Machine Learning Pipeline](#6-machine-learning-pipeline)
 7. [ML Model Performance](#7-ml-model-performance)
-8. [Local Setup & Running](#8-local-setup--running)
-9. [Project Structure](#9-project-structure)
 
 ---
 
@@ -52,6 +50,7 @@ The system is backed by an automated **Python data pipeline** that scrapes Hansa
 - Python services are **auto-started** by the Node backend on launch (`AUTO_START_PYTHON_SERVICES=true`) and communicate via local HTTP.
 
  ---
+ 
 ## 3. Technology Stack
 | Layer | Technology |
 |---|---|
@@ -67,6 +66,7 @@ The system is backed by an automated **Python data pipeline** that scrapes Hansa
 | Scheduling | Python + cron (Linux) / Windows Task Scheduler |
 | Maps | react-simple-maps |
 ---
+
 ## 4. Features — User Side
 ### 4.1 Authentication
 - **Register** with email + username → two-step: basic credentials first, then complete profile (stored in a temporary JWT so no incomplete user documents accumulate in the DB).
@@ -117,13 +117,12 @@ https://github.com/user-attachments/assets/9357e703-0a2a-4e00-bbb8-c315f46231f1
 <img width="1916" height="1021" alt="image" src="https://github.com/user-attachments/assets/f133ccc5-3caa-4aff-b0a5-c1da20b3abdf" />
 
 ### 4.6 Reports
-Available after login:
 | Report | Description |
 |---|---|
 | **Topic Category Distribution** | Real-time category mix across active Issue Portal topics |
 | **Top Performing MPs** | Ranked using the same weighted scoring logic as Featured MPs. |
 | **Most Viewed Topics** | Based on Issue Portal views across active topics |
-All reports are printable / exportable.
+All reports are printable/ exportable.
 <img width="1911" height="1033" alt="image" src="https://github.com/user-attachments/assets/7daf57da-a510-4b84-b315-7cdea62748e9" />
 <img width="1912" height="1027" alt="image" src="https://github.com/user-attachments/assets/5b7b0a08-9d3f-45c4-be47-10b0d7dbd722" />
 <img width="1619" height="1071" alt="image" src="https://github.com/user-attachments/assets/3744e630-190a-4e80-a8cd-c72fab310856" />
@@ -132,7 +131,7 @@ All reports are printable / exportable.
 ### 4.7 Feedback
 - Submit feedback with optional file attachment.
 - Track submission status (Pending / In Review / Resolved).
-- Receive reply notification in the bell / push notification.
+- Receive reply notification in the bell/ push notification.
 <img width="1909" height="1021" alt="image" src="https://github.com/user-attachments/assets/bd8415db-fac9-4f57-be18-268113b24e11" />
 <img width="1912" height="1021" alt="image" src="https://github.com/user-attachments/assets/1b614a0b-bbc5-4a00-856a-263e64eae86b" />
 
@@ -151,3 +150,242 @@ All reports are printable / exportable.
 <img width="554" height="625" alt="image" src="https://github.com/user-attachments/assets/67232c8a-4faf-4304-9675-1df74d85718c" />
 <img width="1910" height="1013" alt="image" src="https://github.com/user-attachments/assets/d528a4c7-3982-4e55-b29e-e326c8f65896" />
 
+---
+## 5. Features — Admin Side
+Accessed at `/admin` — separate login with 2FA (Google Authenticator).
+<img width="1919" height="1029" alt="image" src="https://github.com/user-attachments/assets/6a4fac39-77cf-4520-a28f-cf78f04dbb94" />
+
+### 5.1 Admin Dashboard
+- Overview statistics: total users, active users, forum posts, feedback items.
+- Real-time activity feed via SSE.
+- Quick-access navigation to all admin modules.
+<img width="1919" height="1030" alt="image" src="https://github.com/user-attachments/assets/da2214b4-02ff-47d6-be1b-310936352a2f" />
+
+### 5.2 Admin User Management
+- A page that only superadmin can access to.
+- Manage admin accounts.
+- View admin accounts' logs.
+<img width="1908" height="1030" alt="image" src="https://github.com/user-attachments/assets/faea0acb-e0a6-44f1-85e5-3fdf1143644e" />
+<img width="1913" height="1004" alt="image" src="https://github.com/user-attachments/assets/84f77b0a-1343-4a2a-84c5-cb49894cb35f" />
+
+
+### 5.3 User Management
+- List, search, and filter all registered users.
+<img width="1919" height="1034" alt="image" src="https://github.com/user-attachments/assets/688f8f3c-ec61-46d7-9626-e819ecbf7e01" />
+
+### 5.4 User Monitoring
+- Real-time active session tracking.
+- Per-user activity log drill-down.
+- - **Suspend / Activate** accounts.
+- Apply **forum restrictions** (temporary ban from posting).
+<img width="1890" height="1023" alt="image" src="https://github.com/user-attachments/assets/70cd89c5-b823-4e63-9421-f425de49ed67" />
+
+### 5.5 User Feedback Management
+- Read all submitted feedback.
+- Reply to users (reply triggers in-app and push notification).
+- Update status (Pending → In Review → Resolved).
+<img width="1917" height="1024" alt="image" src="https://github.com/user-attachments/assets/99afd4e6-0c15-434f-a4a7-f1a3296d426c" />
+
+### 5.6 Survey Management
+- Create surveys with multiple question types: **rating, yes/no, multiple-choice, open text**.
+- Publish / close surveys.
+- View response statistics.
+<img width="1919" height="1010" alt="image" src="https://github.com/user-attachments/assets/58f91c82-5318-416e-b142-7643710f87f3" />
+<img width="1919" height="1038" alt="image" src="https://github.com/user-attachments/assets/8e0b41eb-dd22-41a1-8488-2f23abb74e55" />
+
+### 5.7 Educational Content Management
+- **Create / Edit / Delete** articles, videos, documents.
+- Upload content attachments (PDF, images, etc.) — served inline via `/uploads/edu-content/`.
+- Add embedded quizzes: MCQ and True/False questions, configurable passing score.
+- Publish / Draft / Archive statuses.
+- SSE broadcast on publish so live users see updates immediately.
+<img width="1914" height="1023" alt="image" src="https://github.com/user-attachments/assets/e1fc7954-23eb-4112-9c6d-bbf0714b7141" />
+
+### 5.8 MP Management
+- Add / Edit / Deactivate MP profiles.
+- Upload MP photos.
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/1b1fe208-180c-4eb9-b1d9-983342df472f" />
+
+### 5.9 Analytics
+- **Daily Active Users (DAU)** chart.
+- Platform usage breakdown: Issue Portal, MP, Edu, Forum.
+- ML topic cluster distribution across 6 pipelines.
+- Sentiment trend graphs.
+- ARIMA forecast visualisation per topic.
+<img width="1815" height="928" alt="image" src="https://github.com/user-attachments/assets/a947ba87-2271-4d35-b8a3-03dfb9961e6b" />
+<img width="1447" height="872" alt="image" src="https://github.com/user-attachments/assets/9c2c88e3-7e9c-4bb9-985c-e7444f375c11" />
+<img width="1589" height="958" alt="image" src="https://github.com/user-attachments/assets/8be3cddb-27c0-489d-b82d-53b16d0be513" />
+<img width="1859" height="864" alt="image" src="https://github.com/user-attachments/assets/927e42b7-cbed-44c2-8165-bdd90e46e45a" />
+<img width="1913" height="760" alt="image" src="https://github.com/user-attachments/assets/a30308bc-db58-4774-ab8d-8a0bcc135d4c" />
+<img width="1853" height="779" alt="image" src="https://github.com/user-attachments/assets/3034e597-5c80-4812-bac3-ca1ae186f244" />
+<img width="1865" height="1003" alt="image" src="https://github.com/user-attachments/assets/bdb9634c-8f92-459a-8793-18be5784a2ee" />
+<img width="1911" height="1019" alt="image" src="https://github.com/user-attachments/assets/c05570db-b105-48eb-be41-ef1754a0c7ad" />
+<img width="1917" height="1013" alt="image" src="https://github.com/user-attachments/assets/0eed4213-0869-435e-95dd-170ad526eacb" />
+
+### 5.10 Forum Moderation
+- View flagged topics and posts.
+- **Archive / Hide / Restore** content.
+- Bulk moderation actions.
+- Moderation log.
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/c453e82d-8127-4849-ae12-2b3c61e61feb" />
+<img width="1893" height="1015" alt="image" src="https://github.com/user-attachments/assets/f66b4e53-293a-4a4c-8bef-be181f742fae" />
+
+### 5.11 Technical Support
+- View technical support tickets submitted by users.
+- Update ticket status and reply.
+<img width="1918" height="1015" alt="image" src="https://github.com/user-attachments/assets/48aa39e1-c99e-4ab8-b13c-787ea2282116" />
+
+### 5.12 Maintenance Scheduler
+- Schedule maintenance windows with title, description, start/end time.
+- Approval workflow (Pending → Approved → In Progress → Completed).
+- Node backend reads the schedule and returns HTTP 503 with a `maintenanceMode: true` payload to the frontend during active windows; a banner is shown to users.
+<img width="1906" height="1014" alt="image" src="https://github.com/user-attachments/assets/14cacc57-8f35-4445-87d3-96c7177d6d31" />
+<img width="1919" height="1048" alt="image" src="https://github.com/user-attachments/assets/6c23fcc0-12e8-409e-b0e9-677448f3bda3" />
+<img width="1919" height="1074" alt="image" src="https://github.com/user-attachments/assets/9f56669e-0fa0-445f-a4e6-09d9ef15d92d" />
+
+---
+
+## 6. Machine Learning Pipeline
+The system uses two sequential pipelines: a **Data Pipeline** that collects and cleans raw parliamentary text, and an **Inference Pipeline** that applies ML models to produce insights.
+---
+### 6.1 Data Pipeline — Raw Web to Clean Text
+<img width="500" height="1200" alt="Hansard Data Processing-2026-03-28-194055" src="https://github.com/user-attachments/assets/0ffbe824-d79a-4812-8d3b-8f716139e203" />
+
+**CPATF** is a four-stage text normalisation pipeline:
+- **Clean** — remove noise, fix encoding, strip headers/footers
+- **Parse** — segment speeches by speaker and turn
+- **Tokenise** — word and sentence tokenisation
+- **Filter** — remove stopwords, short turns, boilerplate
+  
+<img width="1240" height="693" alt="image" src="https://github.com/user-attachments/assets/eafd19d6-a85c-433f-b5df-71777d5d07e4" />
+
+---
+### 6.2 Inference Pipeline — Clean Text to Insights
+Runs daily (scheduled via `takwim_scheduler.py`) or manually.
+
+| Step | Script | Input | Output |
+|---|---|---|---|
+| 1 | `production_inference.py` | hansard_cpatf / HansardDocument | hansard_inference |
+| 2 | `topic_generation.py` | hansard_inference | hansard_topic |
+| 3 | `arima_forecast.py` | hansard_topic + session mapping | hansard_arima |
+| 4 | `topic_analysis.py` | all above | hansard_analysis |
+
+**Step 1 — Topic Clustering (6 Pipelines)**
+Six parallel pipelines using different models and text combinations:
+
+| Pipeline | Model | Text Source |
+|---|---|---|
+| P1 | BERTopic | Raw OCR text (HansardDocument) |
+| P2 | LDA | Raw OCR text (HansardDocument) |
+| P3 | BERTopic | CPATF cleaned text |
+| P4 | LDA | CPATF cleaned text |
+| P5 | BERTopic (tuned) | CPATF cleaned text |
+| P6 | LDA (tuned) | CPATF cleaned text |
+
+Each pipeline clusters parliamentary speeches into topics and writes results to `hansard_inference`.
+
+**Step 2 — Topic Label Generation**
+- Assigns human-readable labels to each cluster
+- Evaluates label quality: **high / medium / low**
+- Low-quality topics are excluded from ARIMA forecasting
+
+**Step 3 — ARIMA Trend Forecasting**
+- Reads topic frequencies per parliament session (parlimen / penggal / mesyuarat)
+- Fits ARIMA(1,1,0) per topic per pipeline
+- Forecasts the next 3 sessions
+- Only runs for high/medium quality topics
+  
+**Step 4 — Topic Analysis**
+- Sentiment distribution per topic
+- Top speakers per topic
+- Cross-session topic patterns
+  
+---
+
+### 6.3 Scheduling Logic (`takwim_scheduler.py`)
+- **During active *mesyuarat*** (parliament sitting): daily incremental run — checks for new documents in the last N days; re-clusters all documents if new ones exist.
+- **After session ends**: full reprocessing for data integrity.
+- **Monthly**: validates and syncs Takwim data by scraping the Parliament website.
+- **Cron**: `0 8 * * *` (08:00 MYT daily)
+  
+---
+
+### 6.4 Real-Time Microservices (Always-On)
+
+Two Python services are auto-started by the Node backend on launch:
+
+| Service | Port | Model | Purpose |
+|---|---|---|---|
+| `forum_content_moderation.py` | 5001 | HuggingFace classifier + keyword blocklist | Checks every forum post before saving |
+| `sentiment_zeroshot.py` | 5002 | `joeddav/xlm-roberta-large-xnli` | Zero-shot sentiment for EN + Bahasa Malaysia |
+
+---
+
+## 7. ML Model Performance
+### 7.1 Topic Modeling — 6 Pipelines
+**Dataset:** `hansard_core500`
+- P1/P2: 75 full test documents (raw OCR text)
+- P3–P6: 26,754 CPATF cleaned segments
+---
+#### Test Metrics
+<img width="1250" height="546" alt="image" src="https://github.com/user-attachments/assets/d1c7fd15-c2da-4d03-8509-fa68d92ec530" />
+---
+
+#### Composite Scoring — Why P5 Wins Despite Not Leading Every Metric
+A single metric cannot fully capture topic model quality for parliamentary data, so a **weighted composite score** is used:
+Overall Score = 0.30×norm(Silhouette) + 0.30×norm(C_V) + 0.20×norm(NPMI) + 0.20×norm(Topic Diversity)
+
+P4 achieves the **highest raw Silhouette (0.6157)** — its XLM-R embeddings cluster very tightly — but its C_V coherence (0.3977) is the lowest among P3–P6, and NPMI is **negative (-0.0459)**, meaning topics are not semantically meaningful to readers. High separation alone does not equal useful topic labels.
+
+P6 (Multilingual-E5-Large, the SOTA baseline) performs well across coherence and diversity, earning Rank 2 with score 0.657.
+
+**P5 ranks 1st (0.691)** because it achieves the best *balance*: decent cluster separation (Silhouette 0.3767), competitive coherence (C_V 0.4928), positive NPMI (0.0801), and reasonable topic diversity (0.3333). None of its individual scores are the highest, but it has **no weak dimension** — exactly what parliamentary discourse analysis requires, where topics must be both separable *and* interpretable.
+
+P5 also **closes the gap to SOTA**: its overall score (0.691) exceeds the E5-Large SOTA baseline (0.657) by 5.2%, despite using a purpose-built fine-tuned model instead of a general-purpose multilingual embedding. Sensitivity analysis with ±0.1 weight variation confirms P5 consistently ranks in the top 1–2 positions across all reasonable weight configurations.
+
+---
+
+#### Pipeline 5 — What Was Built
+
+**P5: MEHTC + LoRA-GRPO Fine-tuned XLM-RoBERTa** is the flagship pipeline, designed to establish the upper bound of domain-adapted performance.
+
+**Three-component hybrid similarity (MEHTC):**
+
+$$sim(d_i, d_j) = \alpha \cdot cos(\mathbf{v}_{tfidf,i}, \mathbf{v}_{tfidf,j}) + \beta \cdot cos(\mathbf{e}_{ft,i}, \mathbf{e}_{ft,j}) + \gamma \cdot Jaccard_{weighted}(E_i, E_j)$$
+
+| Component | Weight | Role |
+|---|---|---|
+| TF-IDF cosine (α) | 0.347 | Lexical overlap |
+| Fine-tuned XLM-R embedding cosine (β) | 0.605 | Semantic proximity |
+| Weighted Jaccard entity similarity (γ) | 0.122 | Named-entity overlap (person, place, org) |
+
+Weights were optimised using Bayesian optimisation (hyperopt TPE) from Pipeline 4 results.
+
+**Fine-tuning XLM-RoBERTa:**
+
+| Setting | Value |
+|---|---|
+| Base model | `xlm-roberta-base` (278M parameters) |
+| Fine-tuning method | LoRA (Parameter-Efficient Fine-Tuning) + Weighted MLM |
+| Reinforcement learning | GRPO (Group Relative Policy Optimization) |
+| Best LoRA config | r=28, α=40, dropout=0.194 (Bayesian search) |
+| Training corpus | CPATF-cleaned Hansard segments (~20,000) |
+| Hardware | NVIDIA RTX A6000 (48 GB VRAM) |
+| Clustering | Agglomerative Clustering on hybrid similarity matrix |
+
+LoRA adapts only a small number of attention weight matrices rather than all 278M parameters, making fine-tuning computationally feasible while preserving the multilingual pretraining of XLM-R. GRPO then applies reinforcement learning to further align the embedding space towards parliamentary discourse structure.
+
+---
+
+#### Train vs Test Gap Analysis for P5
+
+| Metric | Train | Test | Gap (%) | Interpretation |
+|---|---|---|---|---|
+| Silhouette | 0.0247 | **0.3767** | **-1422%** | Test clusters *far more separated* — fine-tuned embeddings generalise to unseen Hansard text |
+| C_V Coherence | 0.3659 | **0.4928** | **-35%** | Test coherence improves — topics are more semantically meaningful on unseen data |
+| NPMI | -0.008 | **+0.0801** | +1101% | NPMI flips from negative to positive — model recovers meaningful co-occurrence on test |
+| Topic Diversity | 0.565 | 0.3333 | +41% | Slight diversity drop on test — expected, as unseen data has less variety than training set |
+
+The large negative gaps for Silhouette and C_V (test metrics **exceed** training metrics) indicate that the LoRA fine-tuned embeddings learned representations that generalise well to unseen parliamentary text, rather than overfitting to the training split. The NPMI flip from negative (train) to positive (test) is particularly notable: the fine-tuned model better captures co-occurring political concepts in held-out sessions it was never trained on.
+
+<img width="1584" height="275" alt="image" src="https://github.com/user-attachments/assets/263cd830-166f-4ead-b51a-2ab9c4c18cc9" />
