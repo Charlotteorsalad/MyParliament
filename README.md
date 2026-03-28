@@ -17,9 +17,9 @@
 5. [Features — Admin Side](#5-features--admin-side)
 6. [Machine Learning Pipeline](#6-machine-learning-pipeline)
 7. [ML Model Performance](#7-ml-model-performance)
-8. [Acknowledgements & Open Data Sources](#8-acknowledgements-&-open-data-sources)
-9. [Copyright & Intellectual Property](#9-copyright-&-intellectual-property)
-
+8. [Acknowledgements & Open Data Sources](#8-acknowledgements--open-data-sources)
+9. [Copyright & Intellectual Property](#9-copyright--intellectual-property)
+    
 ---
 
 ## 1. Project Introduction
