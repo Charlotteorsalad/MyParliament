@@ -1,33 +1,50 @@
-# Environment variables
-.env
-*.env
+# --- Node.js / Frontend ---
+# Dependencies - very important to ignore these thousands of small files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
+# Build outputs
+dist/
+build/
+.cache/
+
+# --- Machine Learning & Big Data ---
+# Models and large binary files
+*.bin
+*.pt
+*.pth
+*.pkl
+*.h5
+*.joblib
+*.npy
+*.npz
+
+# Exclude specific large model or data directories
+2_ml_modeling/model/
+3_app_system/backend/uploads/
+4_production_deploy/python/lid.176.bin
+
+# --- Data & Logs ---
+# Database and local data files
+*.sqlite
+*.db
+*.csv
+*.xlsx
+*.jsonl
+
+# Logs
 *.log
-.ipynb_checkpoints
+logs/
 
-# Jupyter
-.ipynb_checkpoints/
-
-# VS Code
+# --- OS & IDE (Updated) ---
 .vscode/
-
-# Mac
+.idea/
 .DS_Store
+Thumbs.db
+
+# --- Miscellaneous ---
+# package-lock.json
+# yarn.lock
