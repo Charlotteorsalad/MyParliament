@@ -11,6 +11,10 @@ dist/
 build/
 .cache/
 
+# Python
+__pycache__/
+2_ml_modeling/lib/
+
 # --- Machine Learning & Big Data ---
 # Models and large binary files
 *.bin
@@ -26,6 +30,9 @@ build/
 2_ml_modeling/model/
 3_app_system/backend/uploads/
 4_production_deploy/python/lid.176.bin
+
+# env files
+.env
 
 # --- Data & Logs ---
 # Database and local data files
