@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from '../hooks';
-import { useAdminAuth } from '../hooks/useAdminAuth';
 
 const PinContext = createContext();
 
@@ -15,10 +14,10 @@ export const usePin = () => {
 export const PinProvider = ({ children }) => {
   const [pinnedTabs, setPinnedTabs] = useState([]);
   const { isAuthenticated: isUserAuthenticated } = useAuth();
-  const { isAuthenticated: isAdminAuthenticated } = useAdminAuth();
 
-  // Determine if we should show pin functionality
-  const shouldShowPins = isUserAuthenticated && !isAdminAuthenticated;
+  // Pins are for logged-in users on the public app. Admin may also have a token in the
+  // same browser; we still show pins so Quick Actions works (storage key is user-specific).
+  const shouldShowPins = isUserAuthenticated;
 
   // Load pinned tabs from localStorage
   useEffect(() => {
@@ -72,7 +71,6 @@ export const PinProvider = ({ children }) => {
 
   // PinButton component
   const PinButton = ({ tabId, tabName, module = null, className = "" }) => {
-    // Only render pin button for user authentication, not admin
     if (!shouldShowPins) {
       return null;
     }
@@ -85,10 +83,12 @@ export const PinProvider = ({ children }) => {
           e.stopPropagation();
           togglePin(tabId, tabName, module);
         }}
-        className={`p-1 rounded-full hover:bg-gray-200 transition-colors cursor-pointer ${className}`}
+        className={`p-1.5 rounded-full hover:bg-indigo-100/80 transition-colors cursor-pointer shrink-0 ${className}`}
         title={pinned ? 'Unpin from Quick Actions' : 'Pin to Quick Actions'}
         role="button"
         tabIndex={0}
+        aria-pressed={pinned}
+        aria-label={pinned ? 'Unpin from Quick Actions' : 'Pin to Quick Actions'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -98,7 +98,7 @@ export const PinProvider = ({ children }) => {
         }}
       >
         <svg 
-          className={`w-4 h-4 transition-colors ${pinned ? 'text-yellow-500' : 'text-gray-400 hover:text-yellow-500'}`} 
+          className={`w-[18px] h-[18px] transition-colors ${pinned ? 'text-amber-500' : 'text-indigo-600 hover:text-amber-500'}`} 
           fill={pinned ? 'currentColor' : 'none'} 
           stroke="currentColor" 
           viewBox="0 0 24 24"

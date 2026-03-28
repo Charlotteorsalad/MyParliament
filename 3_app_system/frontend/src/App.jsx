@@ -819,147 +819,200 @@ function ConditionalHeader() {
           {/* Desktop / wide-screen navigation tabs (match admin layout) */}
           <nav className="flex flex-wrap gap-1 py-3 overflow-x-auto scrollbar-hide overflow-y-visible min-w-0 text-base">
             {/* Issue Portal */}
-            <Link
-              to={isAuthenticated ? "/issues" : "/"}
-              className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+            <div
+              className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                 location.pathname === "/" || location.pathname.startsWith("/issues")
                   ? "text-indigo-800 border-indigo-500"
-                  : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                  : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
               }`}
             >
-              <span
-                className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                  location.pathname === "/" || location.pathname.startsWith("/issues")
-                    ? "bg-indigo-100"
-                    : "bg-gray-100 group-hover:bg-indigo-100"
-                }`}
+              <Link
+                to={isAuthenticated ? "/issues" : "/"}
+                className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium"
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 19h3V8H4v11zm6 0h3V4h-3v15zm6 0h3v-7h-3v7z" />
-                </svg>
-              </span>
-              <span>{t('issuePortal')}</span>
-            </Link>
+                <span
+                  className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                    location.pathname === "/" || location.pathname.startsWith("/issues")
+                      ? "bg-indigo-100"
+                      : "bg-gray-100 group-hover:bg-indigo-100"
+                  }`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 19h3V8H4v11zm6 0h3V4h-3v15zm6 0h3v-7h-3v7z" />
+                  </svg>
+                </span>
+                <span>{t('issuePortal')}</span>
+              </Link>
+              {isAuthenticated && (
+                <PinButton
+                  tabId="nav-issues"
+                  tabName={t('issuePortal')}
+                  module="Navigation"
+                  className="text-indigo-600 mr-2 shrink-0"
+                />
+              )}
+            </div>
 
             {/* MP Dashboard */}
-            <Link
-              to="/mps"
-              className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+            <div
+              className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                 location.pathname.startsWith("/mps")
                   ? "text-indigo-800 border-indigo-500"
-                  : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                  : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
               }`}
             >
-              <span
-                className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                  location.pathname.startsWith("/mps")
-                    ? "bg-indigo-100"
-                    : "bg-gray-100 group-hover:bg-indigo-100"
-                }`}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 14a4 4 0 10-8 0v4h8v-4z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4a3 3 0 110 6 3 3 0 010-6z" />
-                </svg>
-              </span>
-              <span>{t('mpDashboard')}</span>
-            </Link>
+              <Link to="/mps" className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium">
+                <span
+                  className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                    location.pathname.startsWith("/mps")
+                      ? "bg-indigo-100"
+                      : "bg-gray-100 group-hover:bg-indigo-100"
+                  }`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 14a4 4 0 10-8 0v4h8v-4z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4a3 3 0 110 6 3 3 0 010-6z" />
+                  </svg>
+                </span>
+                <span>{t('mpDashboard')}</span>
+              </Link>
+              {isAuthenticated && (
+                <PinButton
+                  tabId="nav-mps"
+                  tabName="MP Dashboard"
+                  module="Navigation"
+                  className="text-indigo-600 mr-2 shrink-0"
+                />
+              )}
+            </div>
 
             {/* Educational Content */}
-            <Link
-              to="/edu"
-              className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+            <div
+              className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                 location.pathname.startsWith("/edu")
                   ? "text-indigo-800 border-indigo-500"
-                  : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                  : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
               }`}
             >
-              <span
-                className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                  location.pathname.startsWith("/edu")
-                    ? "bg-indigo-100"
-                    : "bg-gray-100 group-hover:bg-indigo-100"
-                }`}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v14H4V5z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6M9 13h4" />
-                </svg>
-              </span>
-              <span>{t('eduContent')}</span>
-            </Link>
+              <Link to="/edu" className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium">
+                <span
+                  className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                    location.pathname.startsWith("/edu")
+                      ? "bg-indigo-100"
+                      : "bg-gray-100 group-hover:bg-indigo-100"
+                  }`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v14H4V5z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6M9 13h4" />
+                  </svg>
+                </span>
+                <span>{t('eduContent')}</span>
+              </Link>
+              {isAuthenticated && (
+                <PinButton
+                  tabId="nav-edu"
+                  tabName={t('eduContent')}
+                  module="Navigation"
+                  className="text-indigo-600 mr-2 shrink-0"
+                />
+              )}
+            </div>
 
             {/* Forum */}
-            <Link
-              to="/forum"
-              className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+            <div
+              className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                 location.pathname.startsWith("/forum")
                   ? "text-indigo-800 border-indigo-500"
-                  : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                  : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
               }`}
             >
-              <span
-                className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                  location.pathname.startsWith("/forum")
-                    ? "bg-indigo-100"
-                    : "bg-gray-100 group-hover:bg-indigo-100"
-                }`}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </span>
-              <span>{t('forum')}</span>
-            </Link>
+              <Link to="/forum" className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium">
+                <span
+                  className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                    location.pathname.startsWith("/forum")
+                      ? "bg-indigo-100"
+                      : "bg-gray-100 group-hover:bg-indigo-100"
+                  }`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </span>
+                <span>{t('forum')}</span>
+              </Link>
+              {isAuthenticated && (
+                <PinButton
+                  tabId="nav-forum"
+                  tabName={t('forum')}
+                  module="Navigation"
+                  className="text-indigo-600 mr-2 shrink-0"
+                />
+              )}
+            </div>
 
             {/* Extra tabs only after login */}
             {isAuthenticated && (
               <>
                 {/* Reports */}
-                <Link
-                  to="/reports"
-                  className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+                <div
+                  className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                     location.pathname.startsWith("/reports")
                       ? "text-indigo-800 border-indigo-500"
-                      : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                      : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
                   }`}
                 >
-                  <span
-                    className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                      location.pathname.startsWith("/reports")
-                        ? "bg-indigo-100"
-                        : "bg-gray-100 group-hover:bg-indigo-100"
-                    }`}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h2v6H9zm4 0v-4h2v4h-2zM5 21h14a2 2 0 002-2V7a2 2 0 00-2-2h-3.382a2 2 0 01-1.447-.553L12.447 3.553A2 2 0 0011 3H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                    </svg>
-                  </span>
-                  <span>{t('reports')}</span>
-                </Link>
+                  <Link to="/reports" className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium">
+                    <span
+                      className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                        location.pathname.startsWith("/reports")
+                          ? "bg-indigo-100"
+                          : "bg-gray-100 group-hover:bg-indigo-100"
+                      }`}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h2v6H9zm4 0v-4h2v4h-2zM5 21h14a2 2 0 002-2V7a2 2 0 00-2-2h-3.382a2 2 0 01-1.447-.553L12.447 3.553A2 2 0 0011 3H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                    </span>
+                    <span>{t('reports')}</span>
+                  </Link>
+                  <PinButton
+                    tabId="nav-reports"
+                    tabName={t('reports')}
+                    module="Navigation"
+                    className="text-indigo-600 mr-2 shrink-0"
+                  />
+                </div>
 
                 {/* Feedback */}
-                <Link
-                  to="/feedback"
-                  className={`relative flex items-center space-x-2 py-2.5 px-4 rounded-md font-medium transition-all duration-200 group whitespace-nowrap border-b-2 ${
+                <div
+                  className={`relative flex items-center rounded-md border-b-2 whitespace-nowrap transition-colors duration-200 group ${
                     location.pathname.startsWith("/feedback")
                       ? "text-indigo-800 border-indigo-500"
-                      : "text-gray-700 hover:text-indigo-800 hover:bg-indigo-50 border-transparent"
+                      : "text-gray-700 hover:text-indigo-800 border-transparent hover:bg-indigo-50"
                   }`}
                 >
-                  <span
-                    className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
-                      location.pathname.startsWith("/feedback")
-                        ? "bg-indigo-100"
-                        : "bg-gray-100 group-hover:bg-indigo-100"
-                    }`}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h6M5 20l2-4h10a2 2 0 002-2V6a2 2 0 00-2-2H7a2 2 0 00-2 2v12z" />
-                    </svg>
-                  </span>
-                  <span>{t('feedback')}</span>
-                </Link>
+                  <Link to="/feedback" className="flex items-center space-x-2 py-2.5 pl-4 pr-1 font-medium">
+                    <span
+                      className={`p-1.5 rounded transition-all duration-200 inline-flex items-center justify-center ${
+                        location.pathname.startsWith("/feedback")
+                          ? "bg-indigo-100"
+                          : "bg-gray-100 group-hover:bg-indigo-100"
+                      }`}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h6M5 20l2-4h10a2 2 0 002-2V6a2 2 0 00-2-2H7a2 2 0 00-2 2v12z" />
+                      </svg>
+                    </span>
+                    <span>{t('feedback')}</span>
+                  </Link>
+                  <PinButton
+                    tabId="nav-feedback"
+                    tabName={t('feedback')}
+                    module="Navigation"
+                    className="text-indigo-600 mr-2 shrink-0"
+                  />
+                </div>
               </>
             )}
           </nav>
