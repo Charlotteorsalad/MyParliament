@@ -442,7 +442,7 @@ The development of **MyParliament** was made possible through the integration of
 
 **© 2026 MyParliament Project. All Rights Reserved.**
 
-This platform, including its unique **CPATF** (Code-switched Parliament-Aware Token Filtering) and **MEHTC** (Multi-Evidence Hybrid Topic Clustering) methodologies, system architecture, and integrated codebase, is the intellectual property of the developer.
+This platform, including its unique **CPATF** (Code-switched Parliament-Aware Token Filtering) and **MEHTC** (Multi-Embeddings Hybrid Topic Clustering) methodologies, system architecture, and integrated codebase, is the intellectual property of the developer.
 
 * **Software License:** The source code is currently restricted for private use. Redistribution, modification, or commercial use without explicit written consent is prohibited.
 * **Data Usage:** While the platform utilizes public domain government data (Hansard), the processed insights, clustered topics, and generated forecasts are proprietary outputs of the MyParliament ML engine.
